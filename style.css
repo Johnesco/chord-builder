@@ -1,0 +1,483 @@
+:root {
+  --bg: #0f0f1e;
+  --bg-card: #1e1e35;
+  --bg-card-hover: #2a2a45;
+  --bg-card-selected: #3a3a60;
+  --bg-input: #161628;
+  --border: #2a2a4a;
+  --text: #e8e8f0;
+  --text-dim: #8888a0;
+  --accent: #ff6b9d;
+  --accent-hover: #ff8fb1;
+  --accent-dim: rgba(255, 107, 157, 0.3);
+  --secondary: #6c7ce0;
+  --white-key: #f5f5f0;
+  --white-key-hover: #e0e0d8;
+  --white-key-active: #ffaecb;
+  --black-key: #181818;
+  --black-key-hover: #2a2a2a;
+  --black-key-active: #ff6b9d;
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  --radius: 12px;
+  --radius-sm: 6px;
+  --transition: 0.18s ease;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+body {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(108, 124, 224, 0.08), transparent 40%),
+    radial-gradient(circle at 80% 100%, rgba(255, 107, 157, 0.08), transparent 40%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 20px 40px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 28px;
+}
+
+header h1 {
+  font-size: 2.6rem;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--accent), var(--secondary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.02em;
+  margin-bottom: 4px;
+}
+
+.tagline {
+  color: var(--text-dim);
+  font-size: 0.95rem;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+section {
+  background: var(--bg-card);
+  border-radius: var(--radius);
+  padding: 22px;
+  box-shadow: var(--shadow);
+  border: 1px solid var(--border);
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.section-header h2 {
+  font-size: 1.2rem;
+  color: var(--accent);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.progression-controls,
+.editor-controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn {
+  background: var(--bg-card-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.9rem;
+  transition: var(--transition);
+  font-family: inherit;
+}
+
+.btn:hover:not(:disabled) {
+  background: var(--bg-card-selected);
+  border-color: var(--accent-dim);
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Chord list */
+.chord-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 110px;
+  background: var(--bg-input);
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  align-content: flex-start;
+  border: 1px dashed var(--border);
+}
+
+.chord-list:empty::after {
+  content: 'No chords yet — click "+ Add Chord" to start';
+  color: var(--text-dim);
+  font-style: italic;
+  margin: auto;
+  text-align: center;
+  width: 100%;
+  align-self: center;
+}
+
+.chord-card {
+  width: 110px;
+  min-height: 80px;
+  background: var(--bg-card-hover);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  cursor: grab;
+  position: relative;
+  transition: var(--transition);
+  border: 2px solid transparent;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  user-select: none;
+}
+
+.chord-card:hover {
+  background: var(--bg-card-selected);
+}
+
+.chord-card.selected {
+  border-color: var(--accent);
+}
+
+.chord-card.dragging {
+  opacity: 0.4;
+  cursor: grabbing;
+}
+
+.chord-card.drag-over {
+  border-color: var(--secondary);
+  border-style: dashed;
+}
+
+.chord-card.playing {
+  border-color: var(--accent);
+  box-shadow: 0 0 18px var(--accent);
+  animation: pulse 0.55s ease-in-out infinite alternate;
+}
+
+@keyframes pulse {
+  from { transform: scale(1); }
+  to { transform: scale(1.045); }
+}
+
+.chord-card .name {
+  font-weight: 700;
+  font-size: 1.05rem;
+  word-break: break-word;
+  line-height: 1.2;
+}
+
+.chord-card .name.empty {
+  color: var(--text-dim);
+  font-weight: 400;
+  font-style: italic;
+}
+
+.chord-card .duration {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+
+.chord-card .delete-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(255, 80, 80, 0.7);
+  border: none;
+  color: white;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.chord-card:hover .delete-btn {
+  display: flex;
+}
+
+.chord-card .delete-btn:hover {
+  background: rgb(255, 60, 60);
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+kbd {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 1px 5px;
+  font-size: 0.75rem;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+}
+
+/* Piano */
+.piano-wrapper {
+  background: var(--bg-input);
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 18px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+}
+
+.piano {
+  position: relative;
+  display: flex;
+  height: 160px;
+  width: max-content;
+  margin: 0 auto;
+}
+
+.white-key {
+  width: 44px;
+  height: 100%;
+  background: var(--white-key);
+  border: 1px solid #999;
+  border-right: none;
+  border-radius: 0 0 4px 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding-bottom: 8px;
+  font-size: 0.7rem;
+  color: #666;
+  transition: background 0.1s;
+  user-select: none;
+  font-weight: 500;
+}
+
+.white-key:last-of-type {
+  border-right: 1px solid #999;
+}
+
+.white-key:hover {
+  background: var(--white-key-hover);
+}
+
+.white-key.active {
+  background: var(--white-key-active);
+  color: #3a1a2a;
+  font-weight: 600;
+}
+
+.black-key {
+  position: absolute;
+  width: 28px;
+  height: 60%;
+  background: var(--black-key);
+  border: 1px solid #000;
+  border-radius: 0 0 4px 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  padding-bottom: 5px;
+  font-size: 0.55rem;
+  color: #ccc;
+  z-index: 2;
+  transition: background 0.1s;
+  user-select: none;
+}
+
+.black-key:hover {
+  background: var(--black-key-hover);
+}
+
+.black-key.active {
+  background: var(--black-key-active);
+  color: white;
+}
+
+/* Editor info */
+.chord-info {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.info-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.info-row label {
+  min-width: 130px;
+  font-weight: 500;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.muted {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
+.value {
+  color: var(--text);
+}
+
+.value.accent {
+  color: var(--accent);
+}
+
+.mono {
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-size: 0.92rem;
+}
+
+input[type="text"], input[type="number"] {
+  background: var(--bg-input);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 11px;
+  font-family: inherit;
+  font-size: 0.9rem;
+  transition: var(--transition);
+}
+
+input[type="text"]:focus, input[type="number"]:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
+input[type="text"]:disabled, input[type="number"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input[type="text"] {
+  flex: 1;
+  min-width: 150px;
+  max-width: 280px;
+}
+
+input[type="number"] {
+  width: 80px;
+}
+
+footer {
+  text-align: center;
+  margin-top: 32px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+footer a {
+  color: var(--secondary);
+  text-decoration: none;
+}
+
+footer a:hover {
+  text-decoration: underline;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .app {
+    padding: 16px 12px 32px;
+  }
+
+  header h1 {
+    font-size: 2rem;
+  }
+
+  section {
+    padding: 16px;
+  }
+
+  .section-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .progression-controls,
+  .editor-controls {
+    justify-content: center;
+  }
+
+  .white-key {
+    width: 38px;
+  }
+
+  .black-key {
+    width: 24px;
+  }
+
+  .info-row label {
+    min-width: 100%;
+    margin-bottom: -6px;
+  }
+
+  .chord-card {
+    width: calc(50% - 5px);
+  }
+}
