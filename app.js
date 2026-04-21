@@ -1,16 +1,104 @@
+// === Instruments ===
+// Each preset maps to a Tone.js voice class + options passed to PolySynth.
+const INSTRUMENTS = {
+  piano: {
+    name: 'Piano',
+    voice: 'Synth',
+    options: {
+      oscillator: { type: 'triangle' },
+      envelope: { attack: 0.005, decay: 0.5, sustain: 0.2, release: 1.0 }
+    },
+    volume: -6
+  },
+  organ: {
+    name: 'Organ',
+    voice: 'AMSynth',
+    options: {
+      harmonicity: 2,
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.04, decay: 0.05, sustain: 0.9, release: 0.3 },
+      modulation: { type: 'sine' },
+      modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 }
+    },
+    volume: -12
+  },
+  strings: {
+    name: 'Strings',
+    voice: 'Synth',
+    options: {
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.3, decay: 0.1, sustain: 0.8, release: 1.5 }
+    },
+    volume: -8
+  },
+  brass: {
+    name: 'Brass',
+    voice: 'Synth',
+    options: {
+      oscillator: { type: 'sawtooth' },
+      envelope: { attack: 0.08, decay: 0.2, sustain: 0.5, release: 0.6 }
+    },
+    volume: -14
+  },
+  flute: {
+    name: 'Flute',
+    voice: 'Synth',
+    options: {
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.1, decay: 0.1, sustain: 0.6, release: 0.5 }
+    },
+    volume: -6
+  },
+  guitar: {
+    name: 'Guitar (Pluck)',
+    voice: 'PluckSynth',
+    options: {
+      attackNoise: 1,
+      dampening: 4000,
+      resonance: 0.9
+    },
+    volume: -4
+  },
+  bell: {
+    name: 'Bell',
+    voice: 'FMSynth',
+    options: {
+      harmonicity: 3.01,
+      modulationIndex: 14,
+      envelope: { attack: 0.001, decay: 0.8, sustain: 0.1, release: 1.5 },
+      modulation: { type: 'square' },
+      modulationEnvelope: { attack: 0.002, decay: 0.2, sustain: 0, release: 0.2 }
+    },
+    volume: -12
+  },
+  chiptune: {
+    name: 'Chiptune',
+    voice: 'Synth',
+    options: {
+      oscillator: { type: 'square' },
+      envelope: { attack: 0.005, decay: 0.1, sustain: 0.3, release: 0.2 }
+    },
+    volume: -16
+  }
+};
+
+const DEFAULT_INSTRUMENT = 'piano';
+
 // === State ===
 const state = {
   chords: [],
   selectedChordId: null,
+  previousSelectedId: null, // restored after playback ends
   isPlaying: false,
   playingIndex: -1,
+  instrument: DEFAULT_INSTRUMENT,
   synth: null
 };
 
 let playbackTimeouts = [];
 
 // === Constants ===
-const PIANO_OCTAVES = [3, 4]; // [start, end] inclusive; +1 extra C at the end
+const PIANO_OCTAVES = [3, 4];
 const WHITE_NOTES = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
 const BLACK_NOTE_AFTER = { 'C#': 0, 'D#': 1, 'F#': 3, 'G#': 4, 'A#': 5 };
 const WHITE_KEY_WIDTH = 44;
@@ -19,13 +107,40 @@ const MAX_NOTES = 6;
 const STORAGE_KEY = 'chord-builder-state-v1';
 
 // === Audio ===
+function createSynth(instrumentKey) {
+  const preset = INSTRUMENTS[instrumentKey] || INSTRUMENTS[DEFAULT_INSTRUMENT];
+  try {
+    const VoiceClass = Tone[preset.voice] || Tone.Synth;
+    const synth = new Tone.PolySynth(VoiceClass, preset.options).toDestination();
+    synth.volume.value = preset.volume;
+    return synth;
+  } catch (e) {
+    console.warn('Instrument init failed, falling back to default', e);
+    const fb = INSTRUMENTS[DEFAULT_INSTRUMENT];
+    const synth = new Tone.PolySynth(Tone.Synth, fb.options).toDestination();
+    synth.volume.value = fb.volume;
+    return synth;
+  }
+}
+
 function initSynth() {
   if (!state.synth) {
-    state.synth = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'triangle' },
-      envelope: { attack: 0.02, decay: 0.12, sustain: 0.4, release: 0.9 }
-    }).toDestination();
-    state.synth.volume.value = -8;
+    state.synth = createSynth(state.instrument);
+  }
+}
+
+function setInstrument(key) {
+  if (!INSTRUMENTS[key]) return;
+  state.instrument = key;
+  saveState();
+
+  if (state.synth) {
+    try { state.synth.releaseAll(); } catch (e) { /* ignore */ }
+    try { state.synth.dispose(); } catch (e) { /* ignore */ }
+    state.synth = null;
+  }
+  if (typeof Tone !== 'undefined' && Tone.context && Tone.context.state === 'running') {
+    initSynth();
   }
 }
 
@@ -88,8 +203,9 @@ function getDisplayName(chord) {
   return '?';
 }
 
-// === Mutations ===
+// === Mutations (blocked during playback to avoid timing chaos) ===
 function addChord() {
+  if (state.isPlaying) return;
   const chord = createChord();
   state.chords.push(chord);
   state.selectedChordId = chord.id;
@@ -98,6 +214,7 @@ function addChord() {
 }
 
 function removeChord(id) {
+  if (state.isPlaying) return;
   const idx = state.chords.findIndex(c => c.id === id);
   if (idx === -1) return;
   state.chords.splice(idx, 1);
@@ -110,6 +227,7 @@ function removeChord(id) {
 }
 
 function moveChord(fromId, toId) {
+  if (state.isPlaying) return;
   const fromIdx = state.chords.findIndex(c => c.id === fromId);
   const toIdx = state.chords.findIndex(c => c.id === toId);
   if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
@@ -120,6 +238,7 @@ function moveChord(fromId, toId) {
 }
 
 function toggleNote(note) {
+  if (state.isPlaying) return;
   const chord = getSelectedChord();
   if (!chord) return;
   const idx = chord.notes.indexOf(note);
@@ -137,51 +256,62 @@ function toggleNote(note) {
 
 function previewNote(note) {
   ensureAudio().then(() => {
-    state.synth.triggerAttackRelease(note, 0.4);
+    if (state.synth) state.synth.triggerAttackRelease(note, 0.4);
   });
 }
 
 // === Playback ===
-async function playChord(chord) {
-  if (!chord || chord.notes.length === 0) return;
-  await ensureAudio();
-  state.synth.triggerAttackRelease(chord.notes, chord.duration);
+function playChord(chord) {
+  if (state.isPlaying || !chord || chord.notes.length === 0) return;
+  ensureAudio().then(() => {
+    if (state.synth) state.synth.triggerAttackRelease(chord.notes, chord.duration);
+  });
 }
 
 async function playProgression() {
   if (state.isPlaying || state.chords.length === 0) return;
   await ensureAudio();
   state.isPlaying = true;
-  updatePlayButtons();
+  state.previousSelectedId = state.selectedChordId;
+  render();
 
   let time = 0;
   state.chords.forEach((chord, i) => {
-    if (chord.notes.length > 0) {
-      state.synth.triggerAttackRelease(chord.notes, chord.duration, Tone.now() + time);
-    }
+    const fireTime = time * 1000;
     const t = setTimeout(() => {
       state.playingIndex = i;
-      renderChordList();
-    }, time * 1000);
+      state.selectedChordId = chord.id;
+      // Trigger at fire time so instrument swaps mid-progression take effect.
+      if (state.synth && chord.notes.length > 0) {
+        state.synth.triggerAttackRelease(chord.notes, chord.duration);
+      }
+      render();
+    }, fireTime);
     playbackTimeouts.push(t);
     time += chord.duration;
   });
 
-  const tEnd = setTimeout(() => {
-    state.isPlaying = false;
-    state.playingIndex = -1;
-    render();
-  }, time * 1000);
+  const tEnd = setTimeout(() => finishPlayback(), time * 1000);
   playbackTimeouts.push(tEnd);
+}
+
+function finishPlayback() {
+  state.isPlaying = false;
+  state.playingIndex = -1;
+  if (state.previousSelectedId && state.chords.find(c => c.id === state.previousSelectedId)) {
+    state.selectedChordId = state.previousSelectedId;
+  }
+  state.previousSelectedId = null;
+  render();
 }
 
 function stopPlayback() {
   playbackTimeouts.forEach(clearTimeout);
   playbackTimeouts = [];
-  if (state.synth) state.synth.releaseAll();
-  state.isPlaying = false;
-  state.playingIndex = -1;
-  render();
+  if (state.synth) {
+    try { state.synth.releaseAll(); } catch (e) { /* ignore */ }
+  }
+  finishPlayback();
 }
 
 // === Persistence ===
@@ -189,7 +319,8 @@ function saveState() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       chords: state.chords,
-      selectedChordId: state.selectedChordId
+      selectedChordId: state.selectedChordId,
+      instrument: state.instrument
     }));
   } catch (e) { /* quota or disabled — ignore */ }
 }
@@ -199,6 +330,9 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return false;
     const data = JSON.parse(raw);
+    if (data.instrument && INSTRUMENTS[data.instrument]) {
+      state.instrument = data.instrument;
+    }
     if (Array.isArray(data.chords) && data.chords.length > 0) {
       state.chords = data.chords.map(c => ({
         id: c.id || uid(),
@@ -221,7 +355,7 @@ function renderChordList() {
   state.chords.forEach((chord, i) => {
     const card = document.createElement('div');
     card.className = 'chord-card';
-    card.draggable = true;
+    card.draggable = !state.isPlaying;
     card.dataset.id = chord.id;
     if (chord.id === state.selectedChordId) card.classList.add('selected');
     if (i === state.playingIndex) card.classList.add('playing');
@@ -236,6 +370,7 @@ function renderChordList() {
     `;
 
     card.addEventListener('click', (e) => {
+      if (state.isPlaying) return;
       if (e.target.closest('.delete-btn')) return;
       state.selectedChordId = chord.id;
       saveState();
@@ -248,6 +383,7 @@ function renderChordList() {
     });
 
     card.addEventListener('dragstart', (e) => {
+      if (state.isPlaying) { e.preventDefault(); return; }
       card.classList.add('dragging');
       e.dataTransfer.effectAllowed = 'move';
       e.dataTransfer.setData('text/plain', chord.id);
@@ -281,7 +417,6 @@ function renderPiano() {
 
   const [startOctave, endOctave] = PIANO_OCTAVES;
 
-  // White keys
   for (let oct = startOctave; oct <= endOctave; oct++) {
     WHITE_NOTES.forEach(note => {
       const noteName = `${note}${oct}`;
@@ -293,7 +428,6 @@ function renderPiano() {
       piano.appendChild(key);
     });
   }
-  // Final C as a nicer endpoint
   const finalNote = `C${endOctave + 1}`;
   const extraC = document.createElement('div');
   extraC.className = 'white-key';
@@ -302,7 +436,6 @@ function renderPiano() {
   extraC.addEventListener('click', () => toggleNote(finalNote));
   piano.appendChild(extraC);
 
-  // Black keys (positioned absolutely over the white keys)
   for (let oct = startOctave; oct <= endOctave; oct++) {
     Object.entries(BLACK_NOTE_AFTER).forEach(([note, whiteIdx]) => {
       const noteName = `${note}${oct}`;
@@ -350,10 +483,11 @@ function renderEditor() {
     return;
   }
 
-  customName.disabled = false;
-  durationInput.disabled = false;
-  playChordBtn.disabled = chord.notes.length === 0;
-  clearNotesBtn.disabled = chord.notes.length === 0;
+  const lockedForPlayback = state.isPlaying;
+  customName.disabled = lockedForPlayback;
+  durationInput.disabled = lockedForPlayback;
+  playChordBtn.disabled = lockedForPlayback || chord.notes.length === 0;
+  clearNotesBtn.disabled = lockedForPlayback || chord.notes.length === 0;
 
   notesDisplay.textContent = chord.notes.length > 0
     ? chord.notes.join(', ')
@@ -364,7 +498,6 @@ function renderEditor() {
     ? detected.slice(0, 3).join(', ')
     : '(none)';
 
-  // Avoid clobbering user's cursor while typing
   if (document.activeElement !== customName) {
     customName.value = chord.customName || '';
   }
@@ -382,6 +515,7 @@ function updatePlayButtons() {
 }
 
 function render() {
+  document.body.classList.toggle('is-playing', state.isPlaying);
   renderChordList();
   renderEditor();
   updatePlayButtons();
@@ -392,7 +526,6 @@ function init() {
   renderPiano();
 
   if (!loadState()) {
-    // Seed with the I–vi–IV–V progression in C major
     const seed = [
       createChord(['C4', 'E4', 'G4'], 1.0),
       createChord(['A3', 'C4', 'E4'], 1.0),
@@ -403,6 +536,10 @@ function init() {
     state.selectedChordId = seed[0].id;
   }
 
+  const instrumentSelect = document.getElementById('instrument-select');
+  instrumentSelect.value = state.instrument;
+  instrumentSelect.addEventListener('change', (e) => setInstrument(e.target.value));
+
   document.getElementById('add-chord-btn').addEventListener('click', addChord);
   document.getElementById('play-all-btn').addEventListener('click', playProgression);
   document.getElementById('stop-btn').addEventListener('click', stopPlayback);
@@ -410,6 +547,7 @@ function init() {
     playChord(getSelectedChord());
   });
   document.getElementById('clear-notes-btn').addEventListener('click', () => {
+    if (state.isPlaying) return;
     const chord = getSelectedChord();
     if (chord) {
       chord.notes = [];
@@ -418,6 +556,7 @@ function init() {
     }
   });
   document.getElementById('custom-name').addEventListener('input', (e) => {
+    if (state.isPlaying) return;
     const chord = getSelectedChord();
     if (chord) {
       chord.customName = e.target.value.trim() || null;
@@ -426,6 +565,7 @@ function init() {
     }
   });
   document.getElementById('duration').addEventListener('input', (e) => {
+    if (state.isPlaying) return;
     const chord = getSelectedChord();
     if (chord) {
       const val = parseFloat(e.target.value);
@@ -437,9 +577,8 @@ function init() {
     }
   });
 
-  // Spacebar shortcut for play/stop (when not typing in an input)
   document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
     if (e.code === 'Space') {
       e.preventDefault();
       if (state.isPlaying) stopPlayback();
