@@ -99,8 +99,10 @@ const GM_INSTRUMENTS = {
 // Sheet-music layout
 const SHEET_CHORDS_PER_SYSTEM = 4;
 const SHEET_NOTE_WIDTH = 120;
-const SHEET_LEFT_PADDING = 120; // room for clef + key signature
-const SHEET_SYSTEM_HEIGHT = 160;
+const SHEET_LEFT_PADDING = 130;  // room for brace + clef + time sig
+const SHEET_SYSTEM_HEIGHT = 220; // grand staff: treble + gap + bass + padding
+const SHEET_STAVES_GAP = 90;     // vertical distance between treble and bass
+const MIDDLE_C_MIDI = 60;        // C4 — split point between clefs
 
 // === State ===
 const state = {
@@ -490,34 +492,53 @@ function durationToVex(seconds) {
   return '16';
 }
 
-function buildStaveNote(chord) {
+function buildStaveNoteForClef(chord, clef) {
   const dur = durationToVex(chord.duration);
-  if (chord.notes.length === 0) {
-    return new Vex.Flow.StaveNote({ keys: ['b/4'], duration: dur + 'r' });
+  const clefNotes = chord.notes.filter(n => {
+    const m = noteToMidi(n);
+    return clef === 'treble' ? m >= MIDDLE_C_MIDI : m < MIDDLE_C_MIDI;
+  });
+
+  // Empty clef gets a rest of the right duration (at a neutral staff position)
+  if (clefNotes.length === 0) {
+    const restKey = clef === 'bass' ? 'd/3' : 'b/4';
+    const rest = new Vex.Flow.StaveNote({
+      keys: [restKey],
+      duration: dur + 'r',
+      clef
+    });
+    // Still annotate the treble row with the chord name even when that clef is a rest
+    if (clef === 'treble') {
+      annotateWithName(rest, chord);
+    }
+    return rest;
   }
 
   const note = new Vex.Flow.StaveNote({
-    keys: chord.notes.map(vexKey),
-    duration: dur
+    keys: clefNotes.map(vexKey),
+    duration: dur,
+    clef
   });
 
-  chord.notes.forEach((n, i) => {
+  clefNotes.forEach((n, i) => {
     const acc = n.match(/^[A-G]([#b])/);
-    if (acc) {
-      note.addAccidental(i, new Vex.Flow.Accidental(acc[1]));
-    }
+    if (acc) note.addAccidental(i, new Vex.Flow.Accidental(acc[1]));
   });
 
-  const name = getDisplayName(chord);
-  if (name) {
-    const annotation = new Vex.Flow.Annotation(name)
-      .setFont('Arial', 11, 'bold')
-      .setJustification(Vex.Flow.Annotation.Justify.CENTER)
-      .setVerticalJustification(Vex.Flow.Annotation.VerticalJustify.TOP);
-    note.addAnnotation(0, annotation);
-  }
+  // Only annotate on the treble so chord names form a consistent top row
+  if (clef === 'treble') annotateWithName(note, chord);
 
   return note;
+}
+
+function annotateWithName(note, chord) {
+  const name = getDisplayName(chord);
+  if (!name) return;
+  const annotation = new Vex.Flow.Annotation(name)
+    .setFont('Arial', 11, 'bold')
+    .setJustification(Vex.Flow.Annotation.Justify.CENTER)
+    .setVerticalJustification(Vex.Flow.Annotation.VerticalJustify.TOP);
+  note.addAnnotation(0, annotation);
 }
 
 function renderSheet() {
@@ -536,7 +557,7 @@ function renderSheet() {
 
   const systemCount = Math.ceil(state.chords.length / SHEET_CHORDS_PER_SYSTEM);
   const systemWidth = SHEET_LEFT_PADDING + SHEET_CHORDS_PER_SYSTEM * SHEET_NOTE_WIDTH;
-  const totalHeight = 40 + systemCount * SHEET_SYSTEM_HEIGHT;
+  const totalHeight = 30 + systemCount * SHEET_SYSTEM_HEIGHT;
 
   const renderer = new Vex.Flow.Renderer(container, Vex.Flow.Renderer.Backends.SVG);
   renderer.resize(systemWidth + 20, totalHeight);
@@ -545,18 +566,37 @@ function renderSheet() {
   for (let sys = 0; sys < systemCount; sys++) {
     const start = sys * SHEET_CHORDS_PER_SYSTEM;
     const systemChords = state.chords.slice(start, start + SHEET_CHORDS_PER_SYSTEM);
-    const y = 20 + sys * SHEET_SYSTEM_HEIGHT;
+    const y = 30 + sys * SHEET_SYSTEM_HEIGHT;
 
-    const stave = new Vex.Flow.Stave(10, y, systemWidth);
+    const trebleStave = new Vex.Flow.Stave(10, y, systemWidth);
+    const bassStave = new Vex.Flow.Stave(10, y + SHEET_STAVES_GAP, systemWidth);
+
+    trebleStave.addClef('treble');
+    bassStave.addClef('bass');
     if (sys === 0) {
-      stave.addClef('treble').addTimeSignature('4/4');
-    } else {
-      stave.addClef('treble');
+      trebleStave.addTimeSignature('4/4');
+      bassStave.addTimeSignature('4/4');
     }
-    stave.setContext(ctx).draw();
 
-    const notes = systemChords.map(buildStaveNote);
-    Vex.Flow.Formatter.FormatAndDraw(ctx, stave, notes);
+    trebleStave.setContext(ctx).draw();
+    bassStave.setContext(ctx).draw();
+
+    // Brace + edge lines to tie the two staves into a grand staff
+    new Vex.Flow.StaveConnector(trebleStave, bassStave)
+      .setType(Vex.Flow.StaveConnector.type.BRACE)
+      .setContext(ctx).draw();
+    new Vex.Flow.StaveConnector(trebleStave, bassStave)
+      .setType(Vex.Flow.StaveConnector.type.SINGLE_LEFT)
+      .setContext(ctx).draw();
+    new Vex.Flow.StaveConnector(trebleStave, bassStave)
+      .setType(Vex.Flow.StaveConnector.type.SINGLE_RIGHT)
+      .setContext(ctx).draw();
+
+    const trebleNotes = systemChords.map(c => buildStaveNoteForClef(c, 'treble'));
+    const bassNotes = systemChords.map(c => buildStaveNoteForClef(c, 'bass'));
+
+    Vex.Flow.Formatter.FormatAndDraw(ctx, trebleStave, trebleNotes);
+    Vex.Flow.Formatter.FormatAndDraw(ctx, bassStave, bassNotes);
   }
 }
 

@@ -165,7 +165,9 @@ Render window = total progression length + 2s tail for release.
 `exportMidi()` builds a `Midi` object from `@tonejs/midi`. Each chord becomes one simultaneous group of notes; chord durations map directly (in seconds) to MIDI note durations. `track.instrument.number` is set from `GM_INSTRUMENTS[state.instrument]` so a DAW opens the file with roughly the right patch.
 
 ### Sheet Music
-`renderSheet()` draws SVG via VexFlow into a modal. Layout: treble clef, 4/4 time signature on the first system, `SHEET_CHORDS_PER_SYSTEM` (= 4) chords per line. Chord display name is attached as a top-annotation on each stave note. Accidentals are added per note via `addAccidental`.
+`renderSheet()` draws SVG via VexFlow into a modal as a **grand staff** (treble + bass joined by a brace). Each chord's notes split by `MIDDLE_C_MIDI` (60 / C4): notes at or above middle C render on the treble stave, below on the bass. When a clef has no notes for a given chord, a rest of matching duration is placed there. Chord display names are annotated above the treble row only (not doubled on the bass) for a consistent top line of labels.
+
+Layout: `SHEET_CHORDS_PER_SYSTEM` (= 4) chords per system, 4/4 time signature on the first system. Accidentals added per note via `addAccidental`. Brace + left/right connectors tie the staves into a grand staff per system.
 
 Duration mapping: seconds to VexFlow note values assuming 60 BPM (1s = 1 beat). Anything ≥ 3s = whole, ≥ 1.5s = half, ≥ 0.75s = quarter, ≥ 0.375s = eighth, else sixteenth.
 
