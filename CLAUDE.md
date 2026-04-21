@@ -43,7 +43,7 @@ state = {
       id: string,        // unique; generated via uid()
       notes: string[],   // e.g. ['C4', 'E4', 'G4'], max 6, sorted by pitch
       customName: string | null,  // overrides detected name when set
-      duration: number   // seconds (0.1 – 10)
+      duration: number   // BEATS (1 beat = quarter note); 0.0625–16
     }
   ],
   selectedChordId: string | null,    // the chord shown in the editor
@@ -51,11 +51,31 @@ state = {
   isPlaying: boolean,
   playingIndex: number,              // -1 when idle, else index into state.chords
   instrument: string,                // key into INSTRUMENTS map
+  bpm: number,                       // 40–300; default 120
+  timeSignature: { num, den },       // e.g. {num: 4, den: 4}; default 4/4
   synth: Tone.PolySynth | null       // lazily created on first audio gesture
 }
 ```
 
-Persisted keys: `chords`, `selectedChordId`, `instrument`. LocalStorage key: `chord-builder-state-v1`.
+Persisted keys: `chords`, `selectedChordId`, `instrument`, `bpm`, `timeSignature`. LocalStorage key: `chord-builder-state-v1`.
+
+### Time model — beats, not seconds
+
+Chord duration is in **beats** where 1 beat = a quarter note. Playback seconds are derived via `beatsToSeconds(beats) = beats * (60 / state.bpm)`. This means:
+
+- `duration: 1` at 120 BPM plays for 0.5s; at 60 BPM plays for 1.0s
+- The sheet music renders whole/half/quarter/eighth/sixteenth notes using fixed beat thresholds in `durationToVex()`
+- Chord cards display "1 beat" / "2 beats" / fractional values via `formatBeats()`
+- MIDI export sets tempo + time-signature meta so DAWs open the file at the right speed/bar layout
+- WAV export converts beats to seconds at current BPM before offline-rendering
+
+### Migration from the pre-beats format
+
+Older localStorage shapes had `duration` in seconds and no `bpm` field. On load:
+1. If `data.bpm` is missing, `state.bpm` is forced to **60**.
+2. Raw `duration` numbers are kept as-is.
+
+Result: "1.0" is now interpreted as 1 beat, but at 60 BPM that still plays for 1 second — same audible length as before the refactor. Users keep their progressions with zero perceived change; only the units shown in the UI shift.
 
 ## Key Patterns
 
@@ -167,7 +187,9 @@ Render window = total progression length + 2s tail for release.
 ### Sheet Music
 `renderSheet()` draws SVG via VexFlow into a modal as a **grand staff** (treble + bass joined by a brace). Each chord's notes split by `MIDDLE_C_MIDI` (60 / C4): notes at or above middle C render on the treble stave, below on the bass. When a clef has no notes for a given chord, a rest of matching duration is placed there. Chord display names are annotated above the treble row only (not doubled on the bass) for a consistent top line of labels.
 
-Layout: `SHEET_CHORDS_PER_SYSTEM` (= 4) chords per system, 4/4 time signature on the first system. Accidentals added per note via `addAccidental`. Brace + left/right connectors tie the staves into a grand staff per system.
+Layout is driven by the time signature: `groupChordsIntoMeasures()` accumulates chords greedily until their beats sum reaches `state.timeSignature.num`, then starts a new measure. `SHEET_MEASURES_PER_SYSTEM` (= 2) measures per system; a `Vex.Flow.BarNote` is inserted between measures within a system so the Formatter draws an internal bar line. The time signature is shown on the first system only. Accidentals added per note via `addAccidental`. Brace + left/right StaveConnectors bound each system.
+
+Long chords crossing measure boundaries aren't tied across barlines yet — they're placed entirely in whichever measure the greedy grouper lands them in. This is a known v1 simplification.
 
 Duration mapping: seconds to VexFlow note values assuming 60 BPM (1s = 1 beat). Anything ≥ 3s = whole, ≥ 1.5s = half, ≥ 0.75s = quarter, ≥ 0.375s = eighth, else sixteenth.
 

@@ -143,6 +143,69 @@ section {
   cursor: not-allowed;
 }
 
+/* Progression settings (Voice / BPM / Time sig) */
+.progression-settings {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 10px 14px;
+  margin-bottom: 14px;
+  background: var(--bg-input);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.setting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85rem;
+}
+
+.setting-label {
+  color: var(--text-dim);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.progression-settings input[type="number"] {
+  width: 72px;
+  padding: 6px 9px;
+}
+
+.progression-settings select,
+#duration-preset {
+  background: var(--bg-card-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 6px 26px 6px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 0.88rem;
+  font-family: inherit;
+  transition: var(--transition);
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'><path fill='%23e8e8f0' d='M7 10l5 5 5-5z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 6px center;
+}
+
+.progression-settings select:hover,
+#duration-preset:hover {
+  background-color: var(--bg-card-selected);
+  border-color: var(--accent-dim);
+}
+
+.progression-settings select:focus,
+#duration-preset:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-dim);
+}
+
 /* Chord list */
 .chord-list {
   display: flex;

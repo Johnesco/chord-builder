@@ -22,7 +22,15 @@
         <div class="section-header">
           <h2>Progression</h2>
           <div class="progression-controls">
-            <select id="instrument-select" title="Instrument (affects all chords, changeable during playback)">
+            <button id="add-chord-btn" class="btn btn-secondary">+ Add Chord</button>
+            <button id="play-all-btn" class="btn btn-primary">▶ Play All</button>
+            <button id="stop-btn" class="btn btn-secondary" disabled>⏹ Stop</button>
+          </div>
+        </div>
+        <div class="progression-settings">
+          <label class="setting">
+            <span class="setting-label">Voice</span>
+            <select id="instrument-select" title="Instrument — changeable during playback">
               <option value="piano">Piano</option>
               <option value="organ">Organ</option>
               <option value="strings">Strings</option>
@@ -32,10 +40,22 @@
               <option value="bell">Bell</option>
               <option value="chiptune">Chiptune</option>
             </select>
-            <button id="add-chord-btn" class="btn btn-secondary">+ Add Chord</button>
-            <button id="play-all-btn" class="btn btn-primary">▶ Play All</button>
-            <button id="stop-btn" class="btn btn-secondary" disabled>⏹ Stop</button>
-          </div>
+          </label>
+          <label class="setting">
+            <span class="setting-label">BPM</span>
+            <input type="number" id="bpm-input" min="40" max="300" step="1" value="120" />
+          </label>
+          <label class="setting">
+            <span class="setting-label">Time</span>
+            <select id="time-sig-select" title="Time signature — controls where bar lines appear">
+              <option value="4/4">4/4</option>
+              <option value="3/4">3/4</option>
+              <option value="2/4">2/4</option>
+              <option value="6/8">6/8</option>
+              <option value="5/4">5/4</option>
+              <option value="7/8">7/8</option>
+            </select>
+          </label>
         </div>
         <div id="chord-list" class="chord-list"></div>
         <p class="hint">Drag cards to reorder &middot; click a card to edit it &middot; hover for delete &middot; <kbd>Space</kbd> to play/stop</p>
@@ -75,8 +95,16 @@
           </div>
           <div class="info-row">
             <label for="duration">Duration:</label>
-            <input type="number" id="duration" min="0.1" max="10" step="0.1" value="1.0" />
-            <span class="value muted">seconds</span>
+            <input type="number" id="duration" min="0.0625" max="16" step="0.125" value="1" />
+            <select id="duration-preset" title="Quick presets">
+              <option value="">Preset…</option>
+              <option value="4">Whole (4)</option>
+              <option value="2">Half (2)</option>
+              <option value="1">Quarter (1)</option>
+              <option value="0.5">Eighth (½)</option>
+              <option value="0.25">Sixteenth (¼)</option>
+            </select>
+            <span class="value muted">beats</span>
           </div>
         </div>
       </section>

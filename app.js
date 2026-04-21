@@ -97,23 +97,57 @@ const GM_INSTRUMENTS = {
 };
 
 // Sheet-music layout
-const SHEET_CHORDS_PER_SYSTEM = 4;
-const SHEET_NOTE_WIDTH = 120;
+const SHEET_MEASURES_PER_SYSTEM = 2;
+const SHEET_MEASURE_WIDTH = 300; // approximate — Formatter adjusts
 const SHEET_LEFT_PADDING = 130;  // room for brace + clef + time sig
 const SHEET_SYSTEM_HEIGHT = 220; // grand staff: treble + gap + bass + padding
 const SHEET_STAVES_GAP = 90;     // vertical distance between treble and bass
 const MIDDLE_C_MIDI = 60;        // C4 — split point between clefs
 
 // === State ===
+// chord.duration is now in BEATS (1 beat = quarter note). Playback seconds
+// are derived via state.bpm. Migration from the old seconds-based format
+// happens in loadState() by pinning bpm to 60 when the saved shape lacks it
+// (so old 1.0 values keep their original playback length).
 const state = {
   chords: [],
   selectedChordId: null,
-  previousSelectedId: null, // restored after playback ends
+  previousSelectedId: null,
   isPlaying: false,
   playingIndex: -1,
   instrument: DEFAULT_INSTRUMENT,
+  bpm: 120,
+  timeSignature: { num: 4, den: 4 },
   synth: null
 };
+
+function beatsToSeconds(beats) {
+  return beats * (60 / state.bpm);
+}
+
+function formatBeats(beats) {
+  const pretty = Number.isInteger(beats)
+    ? beats.toString()
+    : beats.toFixed(3).replace(/\.?0+$/, '');
+  return `${pretty} beat${beats === 1 ? '' : 's'}`;
+}
+
+function groupChordsIntoMeasures(chords, beatsPerMeasure) {
+  const measures = [];
+  let current = [];
+  let currentBeats = 0;
+  chords.forEach(chord => {
+    current.push(chord);
+    currentBeats += chord.duration;
+    if (currentBeats >= beatsPerMeasure) {
+      measures.push(current);
+      current = [];
+      currentBeats = 0;
+    }
+  });
+  if (current.length > 0) measures.push(current);
+  return measures;
+}
 
 let playbackTimeouts = [];
 
@@ -284,7 +318,9 @@ function previewNote(note) {
 function playChord(chord) {
   if (state.isPlaying || !chord || chord.notes.length === 0) return;
   ensureAudio().then(() => {
-    if (state.synth) state.synth.triggerAttackRelease(chord.notes, chord.duration);
+    if (state.synth) {
+      state.synth.triggerAttackRelease(chord.notes, beatsToSeconds(chord.duration));
+    }
   });
 }
 
@@ -295,20 +331,24 @@ async function playProgression() {
   state.previousSelectedId = state.selectedChordId;
   render();
 
-  let time = 0;
+  let time = 0; // seconds
   state.chords.forEach((chord, i) => {
+    const durationSec = beatsToSeconds(chord.duration);
     const fireTime = time * 1000;
     const t = setTimeout(() => {
       state.playingIndex = i;
       state.selectedChordId = chord.id;
-      // Trigger at fire time so instrument swaps mid-progression take effect.
+      // Read state.synth fresh so mid-playback instrument swaps land on the
+      // next chord. Duration recomputed too so BPM changes during playback
+      // would take effect on the next chord (BPM input is locked during
+      // playback in practice, but this keeps the call correct regardless).
       if (state.synth && chord.notes.length > 0) {
-        state.synth.triggerAttackRelease(chord.notes, chord.duration);
+        state.synth.triggerAttackRelease(chord.notes, beatsToSeconds(chord.duration));
       }
       render();
     }, fireTime);
     playbackTimeouts.push(t);
-    time += chord.duration;
+    time += durationSec;
   });
 
   const tEnd = setTimeout(() => finishPlayback(), time * 1000);
@@ -349,7 +389,9 @@ async function exportWav() {
     // has access to defaults.
     await Tone.start();
 
-    const totalDuration = state.chords.reduce((sum, c) => sum + c.duration, 0);
+    const totalDuration = state.chords.reduce(
+      (sum, c) => sum + beatsToSeconds(c.duration), 0
+    );
     const renderDuration = totalDuration + 2; // room for the release tail
 
     const preset = INSTRUMENTS[state.instrument] || INSTRUMENTS[DEFAULT_INSTRUMENT];
@@ -361,10 +403,11 @@ async function exportWav() {
 
       let t = 0;
       state.chords.forEach(chord => {
+        const durationSec = beatsToSeconds(chord.duration);
         if (chord.notes.length > 0) {
-          synth.triggerAttackRelease(chord.notes, chord.duration, t);
+          synth.triggerAttackRelease(chord.notes, durationSec, t);
         }
-        t += chord.duration;
+        t += durationSec;
       });
     }, renderDuration);
 
@@ -452,6 +495,20 @@ function exportMidi() {
 
   const midi = new Midi();
   midi.name = 'Chord Builder Progression';
+
+  // Tempo + time signature meta so a DAW opens at the right speed and bar layout
+  if (typeof midi.header.setTempo === 'function') {
+    midi.header.setTempo(state.bpm);
+  } else if (midi.header.tempos) {
+    midi.header.tempos.push({ bpm: state.bpm, ticks: 0 });
+  }
+  if (midi.header.timeSignatures) {
+    midi.header.timeSignatures.push({
+      ticks: 0,
+      timeSignature: [state.timeSignature.num, state.timeSignature.den]
+    });
+  }
+
   const track = midi.addTrack();
   track.name = INSTRUMENTS[state.instrument]?.name || 'Chords';
   if (track.instrument) {
@@ -460,17 +517,18 @@ function exportMidi() {
 
   let t = 0;
   state.chords.forEach(chord => {
+    const durationSec = beatsToSeconds(chord.duration);
     if (chord.notes.length > 0) {
       chord.notes.forEach(note => {
         track.addNote({
           name: note,
           time: t,
-          duration: chord.duration,
+          duration: durationSec,
           velocity: 0.8
         });
       });
     }
-    t += chord.duration;
+    t += durationSec;
   });
 
   const blob = new Blob([midi.toArray()], { type: 'audio/midi' });
@@ -484,11 +542,12 @@ function vexKey(note) {
   return `${m[1].toLowerCase()}${m[2]}/${m[3]}`;
 }
 
-function durationToVex(seconds) {
-  if (seconds >= 3) return 'w';
-  if (seconds >= 1.5) return 'h';
-  if (seconds >= 0.75) return 'q';
-  if (seconds >= 0.375) return '8';
+function durationToVex(beats) {
+  // beats → VexFlow duration codes. 1 beat = quarter note.
+  if (beats >= 4) return 'w';
+  if (beats >= 2) return 'h';
+  if (beats >= 1) return 'q';
+  if (beats >= 0.5) return '8';
   return '16';
 }
 
@@ -555,8 +614,12 @@ function renderSheet() {
     return;
   }
 
-  const systemCount = Math.ceil(state.chords.length / SHEET_CHORDS_PER_SYSTEM);
-  const systemWidth = SHEET_LEFT_PADDING + SHEET_CHORDS_PER_SYSTEM * SHEET_NOTE_WIDTH;
+  const beatsPerMeasure = state.timeSignature.num;
+  const measures = groupChordsIntoMeasures(state.chords, beatsPerMeasure);
+  const timeSigStr = `${state.timeSignature.num}/${state.timeSignature.den}`;
+
+  const systemCount = Math.ceil(measures.length / SHEET_MEASURES_PER_SYSTEM);
+  const systemWidth = SHEET_LEFT_PADDING + SHEET_MEASURES_PER_SYSTEM * SHEET_MEASURE_WIDTH;
   const totalHeight = 30 + systemCount * SHEET_SYSTEM_HEIGHT;
 
   const renderer = new Vex.Flow.Renderer(container, Vex.Flow.Renderer.Backends.SVG);
@@ -564,8 +627,11 @@ function renderSheet() {
   const ctx = renderer.getContext();
 
   for (let sys = 0; sys < systemCount; sys++) {
-    const start = sys * SHEET_CHORDS_PER_SYSTEM;
-    const systemChords = state.chords.slice(start, start + SHEET_CHORDS_PER_SYSTEM);
+    const measureStart = sys * SHEET_MEASURES_PER_SYSTEM;
+    const systemMeasures = measures.slice(
+      measureStart,
+      measureStart + SHEET_MEASURES_PER_SYSTEM
+    );
     const y = 30 + sys * SHEET_SYSTEM_HEIGHT;
 
     const trebleStave = new Vex.Flow.Stave(10, y, systemWidth);
@@ -574,14 +640,13 @@ function renderSheet() {
     trebleStave.addClef('treble');
     bassStave.addClef('bass');
     if (sys === 0) {
-      trebleStave.addTimeSignature('4/4');
-      bassStave.addTimeSignature('4/4');
+      trebleStave.addTimeSignature(timeSigStr);
+      bassStave.addTimeSignature(timeSigStr);
     }
 
     trebleStave.setContext(ctx).draw();
     bassStave.setContext(ctx).draw();
 
-    // Brace + edge lines to tie the two staves into a grand staff
     new Vex.Flow.StaveConnector(trebleStave, bassStave)
       .setType(Vex.Flow.StaveConnector.type.BRACE)
       .setContext(ctx).draw();
@@ -592,8 +657,21 @@ function renderSheet() {
       .setType(Vex.Flow.StaveConnector.type.SINGLE_RIGHT)
       .setContext(ctx).draw();
 
-    const trebleNotes = systemChords.map(c => buildStaveNoteForClef(c, 'treble'));
-    const bassNotes = systemChords.map(c => buildStaveNoteForClef(c, 'bass'));
+    // Flatten measures into a single tickables array per clef, with a
+    // BarNote between consecutive measures so the formatter places a
+    // barline at the measure boundary.
+    const trebleNotes = [];
+    const bassNotes = [];
+    systemMeasures.forEach((measureChords, idx) => {
+      measureChords.forEach(chord => {
+        trebleNotes.push(buildStaveNoteForClef(chord, 'treble'));
+        bassNotes.push(buildStaveNoteForClef(chord, 'bass'));
+      });
+      if (idx < systemMeasures.length - 1) {
+        trebleNotes.push(new Vex.Flow.BarNote());
+        bassNotes.push(new Vex.Flow.BarNote());
+      }
+    });
 
     Vex.Flow.Formatter.FormatAndDraw(ctx, trebleStave, trebleNotes);
     Vex.Flow.Formatter.FormatAndDraw(ctx, bassStave, bassNotes);
@@ -626,7 +704,9 @@ function saveState() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       chords: state.chords,
       selectedChordId: state.selectedChordId,
-      instrument: state.instrument
+      instrument: state.instrument,
+      bpm: state.bpm,
+      timeSignature: state.timeSignature
     }));
   } catch (e) { /* quota or disabled — ignore */ }
 }
@@ -636,9 +716,24 @@ function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return false;
     const data = JSON.parse(raw);
+
     if (data.instrument && INSTRUMENTS[data.instrument]) {
       state.instrument = data.instrument;
     }
+
+    // Migration: old format had no bpm field and stored durations as seconds.
+    // Pinning bpm to 60 means the raw duration numbers now interpreted as
+    // beats play back at the same audible length as before.
+    if (typeof data.bpm === 'number') {
+      state.bpm = data.bpm;
+    } else {
+      state.bpm = 60;
+    }
+
+    if (data.timeSignature && typeof data.timeSignature.num === 'number') {
+      state.timeSignature = data.timeSignature;
+    }
+
     if (Array.isArray(data.chords) && data.chords.length > 0) {
       state.chords = data.chords.map(c => ({
         id: c.id || uid(),
@@ -672,7 +767,7 @@ function renderChordList() {
     card.innerHTML = `
       <button class="delete-btn" title="Delete chord" aria-label="Delete chord">×</button>
       <div class="name ${isEmpty ? 'empty' : ''}">${escapeHtml(name || '(empty)')}</div>
-      <div class="duration">${chord.duration.toFixed(1)}s</div>
+      <div class="duration">${formatBeats(chord.duration)}</div>
     `;
 
     card.addEventListener('click', (e) => {
@@ -808,7 +903,10 @@ function renderEditor() {
     customName.value = chord.customName || '';
   }
   if (document.activeElement !== durationInput) {
-    durationInput.value = chord.duration.toFixed(1);
+    // Show an integer value when possible so "1" doesn't appear as "1.000"
+    durationInput.value = Number.isInteger(chord.duration)
+      ? chord.duration.toString()
+      : chord.duration.toFixed(3).replace(/\.?0+$/, '');
   }
 
   updatePianoSelection();
@@ -846,6 +944,26 @@ function init() {
   instrumentSelect.value = state.instrument;
   instrumentSelect.addEventListener('change', (e) => setInstrument(e.target.value));
 
+  const bpmInput = document.getElementById('bpm-input');
+  bpmInput.value = state.bpm;
+  bpmInput.addEventListener('input', (e) => {
+    const val = parseInt(e.target.value, 10);
+    if (!isNaN(val) && val >= 40 && val <= 300) {
+      state.bpm = val;
+      saveState();
+    }
+  });
+
+  const timeSigSelect = document.getElementById('time-sig-select');
+  timeSigSelect.value = `${state.timeSignature.num}/${state.timeSignature.den}`;
+  timeSigSelect.addEventListener('change', (e) => {
+    const [num, den] = e.target.value.split('/').map(n => parseInt(n, 10));
+    if (!isNaN(num) && !isNaN(den)) {
+      state.timeSignature = { num, den };
+      saveState();
+    }
+  });
+
   document.getElementById('add-chord-btn').addEventListener('click', addChord);
   document.getElementById('play-all-btn').addEventListener('click', playProgression);
   document.getElementById('stop-btn').addEventListener('click', stopPlayback);
@@ -875,12 +993,25 @@ function init() {
     const chord = getSelectedChord();
     if (chord) {
       const val = parseFloat(e.target.value);
-      if (!isNaN(val) && val >= 0.1 && val <= 10) {
+      if (!isNaN(val) && val >= 0.0625 && val <= 16) {
         chord.duration = val;
         saveState();
         renderChordList();
       }
     }
+  });
+
+  document.getElementById('duration-preset').addEventListener('change', (e) => {
+    if (state.isPlaying) return;
+    const val = e.target.value;
+    if (!val) return;
+    const chord = getSelectedChord();
+    if (chord) {
+      chord.duration = parseFloat(val);
+      saveState();
+      render();
+    }
+    e.target.value = ''; // reset the dropdown back to "Preset…"
   });
 
   document.getElementById('export-wav-btn').addEventListener('click', exportWav);
