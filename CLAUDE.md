@@ -18,11 +18,11 @@ Everything lives in three files at the repo root:
 
 No routing, no server, no backend. State persists to `localStorage`.
 
-### 3. Audio via Tone.js, Music Theory via Tonal.js
-- **Tone.js** (v14): `Tone.PolySynth` wraps voice classes like `Tone.Synth`, `Tone.FMSynth`, `Tone.AMSynth`, `Tone.PluckSynth`. We schedule notes via `triggerAttackRelease`.
+### 3. Libraries via CDN (UMD globals)
+- **Tone.js** (v14): `Tone.PolySynth` wraps voice classes like `Tone.Synth`, `Tone.FMSynth`, `Tone.AMSynth`, `Tone.PluckSynth`. Notes scheduled via `triggerAttackRelease`. `Tone.Offline()` is used to render WAV exports.
 - **Tonal.js** (v5): `Tonal.Chord.detect(pitchClasses)` returns possible chord names for a set of notes.
-
-Both loaded from unpkg as UMD globals in `index.html`.
+- **@tonejs/midi** (v2): exposes `Midi` global, used to build and serialize `.mid` files.
+- **VexFlow** (v3): exposes `Vex.Flow.*` globals, used to render chord progressions as sheet-music SVG.
 
 ## File Structure
 
@@ -154,10 +154,27 @@ Pages rebuilds automatically (~30s). Check status:
 - `escapeHtml()` for any user-entered text rendered into the DOM (chord custom names).
 - No `innerHTML` with unescaped user input.
 
+## Export Features
+
+### WAV
+`exportWav()` uses `Tone.Offline()` to render the progression to an `AudioBuffer` using the current instrument preset, then encodes to 16-bit PCM WAV via the in-file `audioBufferToWav()` encoder (no extra dependency). Downloaded as `chord-progression.wav`.
+
+Render window = total progression length + 2s tail for release.
+
+### MIDI
+`exportMidi()` builds a `Midi` object from `@tonejs/midi`. Each chord becomes one simultaneous group of notes; chord durations map directly (in seconds) to MIDI note durations. `track.instrument.number` is set from `GM_INSTRUMENTS[state.instrument]` so a DAW opens the file with roughly the right patch.
+
+### Sheet Music
+`renderSheet()` draws SVG via VexFlow into a modal. Layout: treble clef, 4/4 time signature on the first system, `SHEET_CHORDS_PER_SYSTEM` (= 4) chords per line. Chord display name is attached as a top-annotation on each stave note. Accidentals are added per note via `addAccidental`.
+
+Duration mapping: seconds to VexFlow note values assuming 60 BPM (1s = 1 beat). Anything ≥ 3s = whole, ≥ 1.5s = half, ≥ 0.75s = quarter, ≥ 0.375s = eighth, else sixteenth.
+
+Printing: the Print button adds `body.printing-sheet`, which a `@media print` block uses to hide everything except the modal's sheet body. `afterprint` removes the class. "Save as PDF" is available by choosing it as the print destination.
+
 ## What This Project Is NOT
 - Not a DAW. No multi-track, no mixing, no export-to-audio.
 - Not a sheet-music editor. No notation rendering.
 - Not a lesson platform. No theory instruction, no exercises.
 - Not a real-time jam tool. No MIDI input, no latency tuning beyond browser defaults.
 
-It's a focused "compose a chord progression and hear it" web toy.
+It's a focused "compose a chord progression, hear it, and take it with you" web toy — playback in-browser, export to WAV/MIDI/sheet-music for anywhere else.

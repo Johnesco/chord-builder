@@ -84,6 +84,24 @@ const INSTRUMENTS = {
 
 const DEFAULT_INSTRUMENT = 'piano';
 
+// General MIDI patch numbers per instrument preset (for MIDI export)
+const GM_INSTRUMENTS = {
+  piano: 0,     // Acoustic Grand Piano
+  organ: 19,    // Church Organ
+  strings: 48,  // String Ensemble 1
+  brass: 61,    // Brass Section
+  flute: 73,    // Flute
+  guitar: 24,   // Acoustic Guitar (nylon)
+  bell: 14,     // Tubular Bells
+  chiptune: 80  // Lead 1 (square)
+};
+
+// Sheet-music layout
+const SHEET_CHORDS_PER_SYSTEM = 4;
+const SHEET_NOTE_WIDTH = 120;
+const SHEET_LEFT_PADDING = 120; // room for clef + key signature
+const SHEET_SYSTEM_HEIGHT = 160;
+
 // === State ===
 const state = {
   chords: [],
@@ -312,6 +330,254 @@ function stopPlayback() {
     try { state.synth.releaseAll(); } catch (e) { /* ignore */ }
   }
   finishPlayback();
+}
+
+// === Export: WAV ===
+async function exportWav() {
+  if (state.chords.length === 0) return;
+  if (state.isPlaying) stopPlayback();
+
+  const btn = document.getElementById('export-wav-btn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Rendering…';
+
+  try {
+    // Make sure the audio context is started at least once so Tone.Offline
+    // has access to defaults.
+    await Tone.start();
+
+    const totalDuration = state.chords.reduce((sum, c) => sum + c.duration, 0);
+    const renderDuration = totalDuration + 2; // room for the release tail
+
+    const preset = INSTRUMENTS[state.instrument] || INSTRUMENTS[DEFAULT_INSTRUMENT];
+
+    const buffer = await Tone.Offline(() => {
+      const VoiceClass = Tone[preset.voice] || Tone.Synth;
+      const synth = new Tone.PolySynth(VoiceClass, preset.options).toDestination();
+      synth.volume.value = preset.volume;
+
+      let t = 0;
+      state.chords.forEach(chord => {
+        if (chord.notes.length > 0) {
+          synth.triggerAttackRelease(chord.notes, chord.duration, t);
+        }
+        t += chord.duration;
+      });
+    }, renderDuration);
+
+    const audioBuffer = (buffer && typeof buffer.get === 'function') ? buffer.get() : buffer;
+    const wavBlob = audioBufferToWav(audioBuffer);
+    downloadBlob(wavBlob, 'chord-progression.wav');
+  } catch (e) {
+    console.error('WAV export failed', e);
+    alert('WAV export failed: ' + (e.message || e));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
+function audioBufferToWav(buffer) {
+  const numChannels = buffer.numberOfChannels;
+  const sampleRate = buffer.sampleRate;
+  const bitDepth = 16;
+  const bytesPerSample = bitDepth / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const length = buffer.length;
+
+  // Interleave channel data
+  const interleaved = new Float32Array(length * numChannels);
+  for (let ch = 0; ch < numChannels; ch++) {
+    const channelData = buffer.getChannelData(ch);
+    for (let i = 0; i < length; i++) {
+      interleaved[i * numChannels + ch] = channelData[i];
+    }
+  }
+
+  const dataLength = interleaved.length * bytesPerSample;
+  const ab = new ArrayBuffer(44 + dataLength);
+  const view = new DataView(ab);
+
+  writeWavString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataLength, true);
+  writeWavString(view, 8, 'WAVE');
+  writeWavString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true);            // PCM chunk size
+  view.setUint16(20, 1, true);             // format = PCM
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+  writeWavString(view, 36, 'data');
+  view.setUint32(40, dataLength, true);
+
+  let offset = 44;
+  for (let i = 0; i < interleaved.length; i++) {
+    const s = Math.max(-1, Math.min(1, interleaved[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    offset += 2;
+  }
+
+  return new Blob([ab], { type: 'audio/wav' });
+}
+
+function writeWavString(view, offset, str) {
+  for (let i = 0; i < str.length; i++) {
+    view.setUint8(offset + i, str.charCodeAt(i));
+  }
+}
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 500);
+}
+
+// === Export: MIDI ===
+function exportMidi() {
+  if (state.chords.length === 0) return;
+  if (typeof Midi === 'undefined') {
+    alert('MIDI library failed to load.');
+    return;
+  }
+
+  const midi = new Midi();
+  midi.name = 'Chord Builder Progression';
+  const track = midi.addTrack();
+  track.name = INSTRUMENTS[state.instrument]?.name || 'Chords';
+  if (track.instrument) {
+    track.instrument.number = GM_INSTRUMENTS[state.instrument] ?? 0;
+  }
+
+  let t = 0;
+  state.chords.forEach(chord => {
+    if (chord.notes.length > 0) {
+      chord.notes.forEach(note => {
+        track.addNote({
+          name: note,
+          time: t,
+          duration: chord.duration,
+          velocity: 0.8
+        });
+      });
+    }
+    t += chord.duration;
+  });
+
+  const blob = new Blob([midi.toArray()], { type: 'audio/midi' });
+  downloadBlob(blob, 'chord-progression.mid');
+}
+
+// === Sheet Music (VexFlow) ===
+function vexKey(note) {
+  const m = note.match(/^([A-G])([#b]?)(\d+)$/);
+  if (!m) return 'c/4';
+  return `${m[1].toLowerCase()}${m[2]}/${m[3]}`;
+}
+
+function durationToVex(seconds) {
+  if (seconds >= 3) return 'w';
+  if (seconds >= 1.5) return 'h';
+  if (seconds >= 0.75) return 'q';
+  if (seconds >= 0.375) return '8';
+  return '16';
+}
+
+function buildStaveNote(chord) {
+  const dur = durationToVex(chord.duration);
+  if (chord.notes.length === 0) {
+    return new Vex.Flow.StaveNote({ keys: ['b/4'], duration: dur + 'r' });
+  }
+
+  const note = new Vex.Flow.StaveNote({
+    keys: chord.notes.map(vexKey),
+    duration: dur
+  });
+
+  chord.notes.forEach((n, i) => {
+    const acc = n.match(/^[A-G]([#b])/);
+    if (acc) {
+      note.addAccidental(i, new Vex.Flow.Accidental(acc[1]));
+    }
+  });
+
+  const name = getDisplayName(chord);
+  if (name) {
+    const annotation = new Vex.Flow.Annotation(name)
+      .setFont('Arial', 11, 'bold')
+      .setJustification(Vex.Flow.Annotation.Justify.CENTER)
+      .setVerticalJustification(Vex.Flow.Annotation.VerticalJustify.TOP);
+    note.addAnnotation(0, annotation);
+  }
+
+  return note;
+}
+
+function renderSheet() {
+  const container = document.getElementById('sheet-container');
+  container.innerHTML = '';
+
+  if (typeof Vex === 'undefined' || !Vex.Flow) {
+    container.textContent = 'Notation library failed to load.';
+    return;
+  }
+
+  if (state.chords.length === 0) {
+    container.textContent = 'Add some chords to see them as sheet music.';
+    return;
+  }
+
+  const systemCount = Math.ceil(state.chords.length / SHEET_CHORDS_PER_SYSTEM);
+  const systemWidth = SHEET_LEFT_PADDING + SHEET_CHORDS_PER_SYSTEM * SHEET_NOTE_WIDTH;
+  const totalHeight = 40 + systemCount * SHEET_SYSTEM_HEIGHT;
+
+  const renderer = new Vex.Flow.Renderer(container, Vex.Flow.Renderer.Backends.SVG);
+  renderer.resize(systemWidth + 20, totalHeight);
+  const ctx = renderer.getContext();
+
+  for (let sys = 0; sys < systemCount; sys++) {
+    const start = sys * SHEET_CHORDS_PER_SYSTEM;
+    const systemChords = state.chords.slice(start, start + SHEET_CHORDS_PER_SYSTEM);
+    const y = 20 + sys * SHEET_SYSTEM_HEIGHT;
+
+    const stave = new Vex.Flow.Stave(10, y, systemWidth);
+    if (sys === 0) {
+      stave.addClef('treble').addTimeSignature('4/4');
+    } else {
+      stave.addClef('treble');
+    }
+    stave.setContext(ctx).draw();
+
+    const notes = systemChords.map(buildStaveNote);
+    Vex.Flow.Formatter.FormatAndDraw(ctx, stave, notes);
+  }
+}
+
+function openSheetModal() {
+  if (state.isPlaying) stopPlayback();
+  renderSheet();
+  document.getElementById('sheet-modal').hidden = false;
+  document.body.style.overflow = 'hidden';
+}
+
+function closeSheetModal() {
+  document.getElementById('sheet-modal').hidden = true;
+  document.body.style.overflow = '';
+}
+
+function printSheet() {
+  document.body.classList.add('printing-sheet');
+  // Let the class apply before invoking print
+  setTimeout(() => {
+    window.print();
+  }, 50);
 }
 
 // === Persistence ===
@@ -577,8 +843,24 @@ function init() {
     }
   });
 
+  document.getElementById('export-wav-btn').addEventListener('click', exportWav);
+  document.getElementById('export-midi-btn').addEventListener('click', exportMidi);
+  document.getElementById('view-sheet-btn').addEventListener('click', openSheetModal);
+  document.getElementById('close-sheet-btn').addEventListener('click', closeSheetModal);
+  document.getElementById('print-sheet-btn').addEventListener('click', printSheet);
+  document.getElementById('sheet-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'sheet-modal') closeSheetModal();
+  });
+  window.addEventListener('afterprint', () => {
+    document.body.classList.remove('printing-sheet');
+  });
+
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
+    if (e.code === 'Escape' && !document.getElementById('sheet-modal').hidden) {
+      closeSheetModal();
+      return;
+    }
     if (e.code === 'Space') {
       e.preventDefault();
       if (state.isPlaying) stopPlayback();
