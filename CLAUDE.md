@@ -43,7 +43,9 @@ state = {
       id: string,        // unique; generated via uid()
       notes: string[],   // e.g. ['C4', 'E4', 'G4'], max 6, sorted by pitch
       customName: string | null,  // overrides detected name when set
-      duration: number   // BEATS (1 beat = quarter note); 0.0625–16
+      duration: number,  // BEATS (1 beat = quarter note); 0.0625–16
+      articulation: 'block' | 'up' | 'down',  // how notes are struck
+      stagger: number    // ms between note onsets when articulation != 'block'; 10–500
     }
   ],
   selectedChordId: string | null,    // the chord shown in the editor
@@ -68,6 +70,20 @@ Chord duration is in **beats** where 1 beat = a quarter note. Playback seconds a
 - Chord cards display "1 beat" / "2 beats" / fractional values via `formatBeats()`
 - MIDI export sets tempo + time-signature meta so DAWs open the file at the right speed/bar layout
 - WAV export converts beats to seconds at current BPM before offline-rendering
+
+### Articulation — block / arpeggio up / arpeggio down
+
+Each chord has an `articulation` field (`'block' | 'up' | 'down'`) and a `stagger` value (milliseconds between consecutive note onsets). Playback, WAV, and MIDI all share the same scheduling contract via `scheduleChord(synth, chord, absoluteStartTime)`:
+
+- **block** — all notes triggered at `absoluteStartTime` with the full chord duration
+- **up** — notes sorted low-to-high, each offset by `stagger * index`
+- **down** — notes reversed high-to-low, each offset by `stagger * index`
+
+Each note's release is aligned to the chord window end (`noteDur = durationSec - offset`), so earlier notes sustain while later notes enter, producing a natural arpeggio. If the cumulative stagger would exceed the chord window, offsets clamp to `durationSec - 0.05` so every note still starts inside the slot.
+
+The sheet renderer adds a `Vex.Flow.Stroke` modifier (`ROLL_UP` / `ROLL_DOWN`) to arpeggiated chord noteheads, which draws the wavy vertical line before the chord. Block chords get no stroke.
+
+MIDI export inlines the same staggering directly in `track.addNote({ time, duration })` calls rather than going through `scheduleChord` (since MIDI uses note-event times, not synth triggers).
 
 ### Migration from the pre-beats format
 

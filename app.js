@@ -230,7 +230,42 @@ function sortNotes(notes) {
 
 // === Chord domain ===
 function createChord(notes = [], duration = 1.0, customName = null) {
-  return { id: uid(), notes: sortNotes(notes), customName, duration };
+  return {
+    id: uid(),
+    notes: sortNotes(notes),
+    customName,
+    duration,
+    articulation: 'block', // 'block' | 'up' | 'down'
+    stagger: 60            // ms between note onsets when articulation != 'block'
+  };
+}
+
+// Schedule a chord on a synth at an absolute start time (seconds).
+// Respects articulation:
+//   'block' - all notes at start
+//   'up'    - notes low-to-high, each offset by stagger
+//   'down'  - notes high-to-low, each offset by stagger
+// Clamps offsets so the last note still starts before the chord window ends.
+function scheduleChord(synth, chord, absoluteStartTime) {
+  if (!chord || chord.notes.length === 0) return;
+  const durationSec = beatsToSeconds(chord.duration);
+
+  if (chord.articulation === 'block' || chord.notes.length <= 1) {
+    synth.triggerAttackRelease(chord.notes, durationSec, absoluteStartTime);
+    return;
+  }
+
+  const staggerSec = Math.max(0.005, (chord.stagger || 60) / 1000);
+  const ordered = chord.articulation === 'down'
+    ? [...chord.notes].reverse()
+    : chord.notes;
+
+  ordered.forEach((note, i) => {
+    const rawOffset = i * staggerSec;
+    const offset = Math.min(rawOffset, Math.max(0, durationSec - 0.05));
+    const noteDur = Math.max(0.05, durationSec - offset);
+    synth.triggerAttackRelease(note, noteDur, absoluteStartTime + offset);
+  });
 }
 
 function getSelectedChord() {
@@ -318,9 +353,7 @@ function previewNote(note) {
 function playChord(chord) {
   if (state.isPlaying || !chord || chord.notes.length === 0) return;
   ensureAudio().then(() => {
-    if (state.synth) {
-      state.synth.triggerAttackRelease(chord.notes, beatsToSeconds(chord.duration));
-    }
+    if (state.synth) scheduleChord(state.synth, chord, Tone.now());
   });
 }
 
@@ -339,11 +372,9 @@ async function playProgression() {
       state.playingIndex = i;
       state.selectedChordId = chord.id;
       // Read state.synth fresh so mid-playback instrument swaps land on the
-      // next chord. Duration recomputed too so BPM changes during playback
-      // would take effect on the next chord (BPM input is locked during
-      // playback in practice, but this keeps the call correct regardless).
+      // next chord. scheduleChord handles block/arpeggio articulation.
       if (state.synth && chord.notes.length > 0) {
-        state.synth.triggerAttackRelease(chord.notes, beatsToSeconds(chord.duration));
+        scheduleChord(state.synth, chord, Tone.now());
       }
       render();
     }, fireTime);
@@ -403,11 +434,8 @@ async function exportWav() {
 
       let t = 0;
       state.chords.forEach(chord => {
-        const durationSec = beatsToSeconds(chord.duration);
-        if (chord.notes.length > 0) {
-          synth.triggerAttackRelease(chord.notes, durationSec, t);
-        }
-        t += durationSec;
+        scheduleChord(synth, chord, t);
+        t += beatsToSeconds(chord.duration);
       });
     }, renderDuration);
 
@@ -519,11 +547,20 @@ function exportMidi() {
   state.chords.forEach(chord => {
     const durationSec = beatsToSeconds(chord.duration);
     if (chord.notes.length > 0) {
-      chord.notes.forEach(note => {
+      const isBlock = chord.articulation === 'block' || chord.notes.length <= 1;
+      const staggerSec = Math.max(0.005, (chord.stagger || 60) / 1000);
+      const ordered = chord.articulation === 'down'
+        ? [...chord.notes].reverse()
+        : chord.notes;
+
+      ordered.forEach((note, i) => {
+        const rawOffset = isBlock ? 0 : i * staggerSec;
+        const offset = Math.min(rawOffset, Math.max(0, durationSec - 0.05));
+        const noteDur = Math.max(0.05, durationSec - offset);
         track.addNote({
           name: note,
-          time: t,
-          duration: durationSec,
+          time: t + offset,
+          duration: noteDur,
           velocity: 0.8
         });
       });
@@ -583,6 +620,17 @@ function buildStaveNoteForClef(chord, clef) {
     const acc = n.match(/^[A-G]([#b])/);
     if (acc) note.addAccidental(i, new Vex.Flow.Accidental(acc[1]));
   });
+
+  // Arpeggio stroke (the wavy vertical line before the chord) for non-block
+  // articulations. Applied per clef where real notes exist.
+  if (chord.articulation === 'up' || chord.articulation === 'down') {
+    try {
+      const type = chord.articulation === 'down'
+        ? Vex.Flow.Stroke.Type.ROLL_DOWN
+        : Vex.Flow.Stroke.Type.ROLL_UP;
+      note.addStroke(0, new Vex.Flow.Stroke(type));
+    } catch (e) { /* Stroke API may vary between VexFlow versions */ }
+  }
 
   // Only annotate on the treble so chord names form a consistent top row
   if (clef === 'treble') annotateWithName(note, chord);
@@ -739,7 +787,9 @@ function loadState() {
         id: c.id || uid(),
         notes: Array.isArray(c.notes) ? c.notes : [],
         customName: c.customName || null,
-        duration: typeof c.duration === 'number' ? c.duration : 1.0
+        duration: typeof c.duration === 'number' ? c.duration : 1.0,
+        articulation: ['block', 'up', 'down'].includes(c.articulation) ? c.articulation : 'block',
+        stagger: typeof c.stagger === 'number' ? c.stagger : 60
       }));
       state.selectedChordId = data.selectedChordId || state.chords[0].id;
       return true;
@@ -764,10 +814,13 @@ function renderChordList() {
     const name = getDisplayName(chord);
     const isEmpty = !name;
 
+    const articSymbol = chord.articulation === 'up'   ? '↑ '
+                       : chord.articulation === 'down' ? '↓ '
+                       : '';
     card.innerHTML = `
       <button class="delete-btn" title="Delete chord" aria-label="Delete chord">×</button>
       <div class="name ${isEmpty ? 'empty' : ''}">${escapeHtml(name || '(empty)')}</div>
-      <div class="duration">${formatBeats(chord.duration)}</div>
+      <div class="duration">${articSymbol}${formatBeats(chord.duration)}</div>
     `;
 
     card.addEventListener('click', (e) => {
@@ -869,6 +922,9 @@ function renderEditor() {
   const detectedDisplay = document.getElementById('detected-display');
   const customName = document.getElementById('custom-name');
   const durationInput = document.getElementById('duration');
+  const articulationSelect = document.getElementById('articulation');
+  const staggerInput = document.getElementById('stagger');
+  const spreadWrap = document.getElementById('spread-wrap');
   const playChordBtn = document.getElementById('play-chord-btn');
   const clearNotesBtn = document.getElementById('clear-notes-btn');
 
@@ -878,6 +934,8 @@ function renderEditor() {
     customName.value = '';
     customName.disabled = true;
     durationInput.disabled = true;
+    articulationSelect.disabled = true;
+    staggerInput.disabled = true;
     playChordBtn.disabled = true;
     clearNotesBtn.disabled = true;
     updatePianoSelection();
@@ -887,8 +945,19 @@ function renderEditor() {
   const lockedForPlayback = state.isPlaying;
   customName.disabled = lockedForPlayback;
   durationInput.disabled = lockedForPlayback;
+  articulationSelect.disabled = lockedForPlayback;
+  staggerInput.disabled = lockedForPlayback;
   playChordBtn.disabled = lockedForPlayback || chord.notes.length === 0;
   clearNotesBtn.disabled = lockedForPlayback || chord.notes.length === 0;
+
+  const articulation = chord.articulation || 'block';
+  if (document.activeElement !== articulationSelect) {
+    articulationSelect.value = articulation;
+  }
+  if (document.activeElement !== staggerInput) {
+    staggerInput.value = chord.stagger != null ? chord.stagger : 60;
+  }
+  spreadWrap.classList.toggle('hidden', articulation === 'block');
 
   notesDisplay.textContent = chord.notes.length > 0
     ? chord.notes.join(', ')
@@ -1012,6 +1081,29 @@ function init() {
       render();
     }
     e.target.value = ''; // reset the dropdown back to "Preset…"
+  });
+
+  document.getElementById('articulation').addEventListener('change', (e) => {
+    if (state.isPlaying) return;
+    const chord = getSelectedChord();
+    if (!chord) return;
+    if (['block', 'up', 'down'].includes(e.target.value)) {
+      chord.articulation = e.target.value;
+      saveState();
+      render();
+    }
+  });
+
+  document.getElementById('stagger').addEventListener('input', (e) => {
+    if (state.isPlaying) return;
+    const chord = getSelectedChord();
+    if (!chord) return;
+    const val = parseFloat(e.target.value);
+    if (!isNaN(val) && val >= 10 && val <= 500) {
+      chord.stagger = val;
+      saveState();
+      renderChordList();
+    }
   });
 
   document.getElementById('export-wav-btn').addEventListener('click', exportWav);
