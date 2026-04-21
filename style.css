@@ -460,11 +460,16 @@ body.is-playing .chord-card {
 }
 
 body.is-playing .editor-controls,
-body.is-playing .piano-wrapper,
 body.is-playing .chord-info {
   opacity: 0.65;
   pointer-events: none;
   transition: opacity 0.2s;
+}
+
+/* Piano stays fully lit during playback so users can watch the keys
+   light up — just disable interaction. */
+body.is-playing .piano-wrapper {
+  pointer-events: none;
 }
 
 footer {
