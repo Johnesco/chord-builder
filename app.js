@@ -709,23 +709,38 @@ function buildStaveNoteForClef(chord, clef) {
     if (acc) note.addAccidental(i, new Vex.Flow.Accidental(acc[1]));
   });
 
-  // Notation per articulation. Pyramid/valley reuse the dominant initial
-  // direction's stroke (standard notation has no single symbol for round-trip
-  // arpeggios). Random gets the directionless wavy line. Tremolo gets stem
-  // slashes. Alberti has no canonical stroke — it's a broken-chord pattern,
-  // not a roll — so it renders unmarked.
+  // Notation per articulation, using the most idiomatic piano-engraving
+  // convention:
+  //   up / updown    → plain wavy line (ARPEGGIO_DIRECTIONLESS). Ascending is
+  //                    the *default* arpeggio direction in piano notation, so
+  //                    no arrow is conventional. This also reads as up-strum
+  //                    for guitarists, since the directionless squiggle
+  //                    doesn't conflict with hand-direction conventions.
+  //   down / downup  → wavy line with a downward arrow (ROLL_DOWN). The
+  //                    explicit arrow is required because descending is the
+  //                    non-default direction.
+  //   tremolo        → stem slashes (Tremolo modifier).
+  //   random         → no standard glyph; we attach a small italic "rand."
+  //                    text below the bass stave so it's distinguishable
+  //                    from the plain ascending squiggle.
+  //   alberti        → no marker (broken-chord pattern, not a roll).
+  //   block          → no marker.
   const artic = chord.articulation || 'block';
   if (artic === 'up' || artic === 'updown') {
     try {
-      note.addStroke(0, new Vex.Flow.Stroke(Vex.Flow.Stroke.Type.ROLL_UP));
+      note.addStroke(0, new Vex.Flow.Stroke(Vex.Flow.Stroke.Type.ARPEGGIO_DIRECTIONLESS));
     } catch (e) { /* ignore */ }
   } else if (artic === 'down' || artic === 'downup') {
     try {
       note.addStroke(0, new Vex.Flow.Stroke(Vex.Flow.Stroke.Type.ROLL_DOWN));
     } catch (e) { /* ignore */ }
-  } else if (artic === 'random') {
+  } else if (artic === 'random' && clef === 'bass') {
     try {
-      note.addStroke(0, new Vex.Flow.Stroke(Vex.Flow.Stroke.Type.ARPEGGIO_DIRECTIONLESS));
+      const ann = new Vex.Flow.Annotation('rand.')
+        .setFont('Arial', 9, 'italic')
+        .setJustification(Vex.Flow.Annotation.Justify.CENTER)
+        .setVerticalJustification(Vex.Flow.Annotation.VerticalJustify.BOTTOM);
+      note.addAnnotation(0, ann);
     } catch (e) { /* ignore */ }
   } else if (artic === 'tremolo') {
     try {

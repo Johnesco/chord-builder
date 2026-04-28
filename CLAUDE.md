@@ -80,13 +80,13 @@ Each chord has an `articulation` field and a `stagger` value (ms between success
 | Value | Behavior | Sheet notation |
 |---|---|---|
 | `block` | All notes simultaneously, full duration | (no marker) |
-| `up` | Low → high, each offset by `stagger * i` | `Stroke.ROLL_UP` (wavy line + up arrow) |
-| `down` | High → low, each offset by `stagger * i` | `Stroke.ROLL_DOWN` |
-| `updown` | Pyramid: `C-E-G` → `C-E-G-E-C` (top played once) | `Stroke.ROLL_UP` (best approx; standard notation has no single round-trip glyph) |
+| `up` | Low → high, each offset by `stagger * i` | `Stroke.ARPEGGIO_DIRECTIONLESS` (plain wavy line — ascending is the default arpeggio direction in piano notation, so no arrow is conventional) |
+| `down` | High → low, each offset by `stagger * i` | `Stroke.ROLL_DOWN` (wavy line + down arrow — descending is the non-default direction, requires the explicit arrow) |
+| `updown` | Pyramid: `C-E-G` → `C-E-G-E-C` (top played once) | `Stroke.ARPEGGIO_DIRECTIONLESS` (best approx; standard notation has no single round-trip glyph) |
 | `downup` | Valley: `C-E-G` → `G-E-C-E-G` (bottom played once) | `Stroke.ROLL_DOWN` |
 | `alberti` | Triad-only canonical 1-5-3-5 cycle (`low, high, mid, high`) repeating across the duration. Falls back to `block` if `notes.length !== 3` (the editor option is disabled for non-triads, but `chordToEvents` double-guards) | (no marker — Alberti is a broken-chord pattern, not a roll) |
 | `tremolo` | The full chord retriggered every `stagger` ms across the chord's window | `Tremolo(3)` modifier — three slashes through the stem |
-| `random` | Notes shuffled each playback (non-deterministic). Each play = different order | `Stroke.ARPEGGIO_DIRECTIONLESS` (wavy line, no arrow) |
+| `random` | Notes shuffled each playback (non-deterministic). Each play = different order | Small italic "rand." text annotation below the bass stave (no standard glyph exists; we use text to keep it distinguishable from the plain ascending squiggle) |
 
 For staggered articulations (up/down/updown/downup/random), each note's release is aligned to the chord-window end (`noteDur = durationSec - offset`), so earlier notes sustain while later notes enter — natural arpeggio overlap. Offsets clamp to `durationSec - 0.05` so even a too-large stagger keeps every note inside the slot.
 
