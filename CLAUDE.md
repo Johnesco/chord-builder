@@ -44,8 +44,10 @@ state = {
       notes: string[],   // e.g. ['C4', 'E4', 'G4'], max 6, sorted by pitch
       customName: string | null,  // overrides detected name when set
       duration: number,  // BEATS (1 beat = quarter note); 0.0625–16
-      articulation: 'block' | 'up' | 'down',  // how notes are struck
-      stagger: number    // ms between note onsets when articulation != 'block'; 10–500
+      articulation:
+        'block' | 'up' | 'down' | 'updown' | 'downup'
+      | 'alberti' | 'tremolo' | 'random',
+      stagger: number    // ms between note onsets / tremolo hits; 10–500
     }
   ],
   selectedChordId: string | null,    // the chord shown in the editor
@@ -71,19 +73,26 @@ Chord duration is in **beats** where 1 beat = a quarter note. Playback seconds a
 - MIDI export sets tempo + time-signature meta so DAWs open the file at the right speed/bar layout
 - WAV export converts beats to seconds at current BPM before offline-rendering
 
-### Articulation — block / arpeggio up / arpeggio down
+### Articulation — block / arpeggios / alberti / tremolo / random
 
-Each chord has an `articulation` field (`'block' | 'up' | 'down'`) and a `stagger` value (milliseconds between consecutive note onsets). Playback, WAV, and MIDI all share the same scheduling contract via `scheduleChord(synth, chord, absoluteStartTime)`:
+Each chord has an `articulation` field and a `stagger` value (ms between successive onsets / tremolo hits). The single source of truth for playback, WAV (`Tone.Offline`), and MIDI export is `chordToEvents(chord)`, which returns a flat list of `{note, offsetSec, durationSec}` events relative to the chord's start. `scheduleChord(synth, chord, absoluteStartTime)` is just `chordToEvents` + `triggerAttackRelease`. MIDI export iterates the same list and feeds `track.addNote`.
 
-- **block** — all notes triggered at `absoluteStartTime` with the full chord duration
-- **up** — notes sorted low-to-high, each offset by `stagger * index`
-- **down** — notes reversed high-to-low, each offset by `stagger * index`
+| Value | Behavior | Sheet notation |
+|---|---|---|
+| `block` | All notes simultaneously, full duration | (no marker) |
+| `up` | Low → high, each offset by `stagger * i` | `Stroke.ROLL_UP` (wavy line + up arrow) |
+| `down` | High → low, each offset by `stagger * i` | `Stroke.ROLL_DOWN` |
+| `updown` | Pyramid: `C-E-G` → `C-E-G-E-C` (top played once) | `Stroke.ROLL_UP` (best approx; standard notation has no single round-trip glyph) |
+| `downup` | Valley: `C-E-G` → `G-E-C-E-G` (bottom played once) | `Stroke.ROLL_DOWN` |
+| `alberti` | Triad-only canonical 1-5-3-5 cycle (`low, high, mid, high`) repeating across the duration. Falls back to `block` if `notes.length !== 3` (the editor option is disabled for non-triads, but `chordToEvents` double-guards) | (no marker — Alberti is a broken-chord pattern, not a roll) |
+| `tremolo` | The full chord retriggered every `stagger` ms across the chord's window | `Tremolo(3)` modifier — three slashes through the stem |
+| `random` | Notes shuffled each playback (non-deterministic). Each play = different order | `Stroke.ARPEGGIO_DIRECTIONLESS` (wavy line, no arrow) |
 
-Each note's release is aligned to the chord window end (`noteDur = durationSec - offset`), so earlier notes sustain while later notes enter, producing a natural arpeggio. If the cumulative stagger would exceed the chord window, offsets clamp to `durationSec - 0.05` so every note still starts inside the slot.
+For staggered articulations (up/down/updown/downup/random), each note's release is aligned to the chord-window end (`noteDur = durationSec - offset`), so earlier notes sustain while later notes enter — natural arpeggio overlap. Offsets clamp to `durationSec - 0.05` so even a too-large stagger keeps every note inside the slot.
 
-The sheet renderer adds a `Vex.Flow.Stroke` modifier (`ROLL_UP` / `ROLL_DOWN`) to arpeggiated chord noteheads, which draws the wavy vertical line before the chord. Block chords get no stroke.
+For sustained patterns (tremolo, alberti), the cycle is generated until time `t >= durationSec`, with each hit lasting `min(stagger, remaining)`.
 
-MIDI export inlines the same staggering directly in `track.addNote({ time, duration })` calls rather than going through `scheduleChord` (since MIDI uses note-event times, not synth triggers).
+The Alberti option is special-cased in `renderEditor()`: the `<option>` stays visible (so it's discoverable) but its `disabled` attribute toggles based on `chord.notes.length !== 3`. The `valid articulations` list (`VALID_ARTICULATIONS`) and the per-card prefix table (`ARTICULATION_SYMBOLS`) live next to `chordToEvents` for easy maintenance.
 
 ### Migration from the pre-beats format
 

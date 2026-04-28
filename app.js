@@ -240,31 +240,130 @@ function createChord(notes = [], duration = 1.0, customName = null) {
   };
 }
 
-// Schedule a chord on a synth at an absolute start time (seconds).
-// Respects articulation:
-//   'block' - all notes at start
-//   'up'    - notes low-to-high, each offset by stagger
-//   'down'  - notes high-to-low, each offset by stagger
-// Clamps offsets so the last note still starts before the chord window ends.
-function scheduleChord(synth, chord, absoluteStartTime) {
-  if (!chord || chord.notes.length === 0) return;
-  const durationSec = beatsToSeconds(chord.duration);
+// Visual prefix shown on chord cards per articulation.
+const ARTICULATION_SYMBOLS = {
+  block:   '',
+  up:      '↑',
+  down:    '↓',
+  updown:  '↑↓',
+  downup:  '↓↑',
+  alberti: 'A',
+  tremolo: '≋',
+  random:  '?'
+};
+const VALID_ARTICULATIONS = Object.keys(ARTICULATION_SYMBOLS);
 
-  if (chord.articulation === 'block' || chord.notes.length <= 1) {
-    synth.triggerAttackRelease(chord.notes, durationSec, absoluteStartTime);
-    return;
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// Convert a chord into a flat list of {note, offsetSec, durationSec} events.
+// Single source of truth for playback, Tone.Offline (WAV), and MIDI export.
+//
+// Articulations:
+//   block     – all notes simultaneously, full duration
+//   up/down   – notes ordered low-to-high or high-to-low, staggered onsets
+//   updown    – C-E-G → C-E-G-E-C (top played once)
+//   downup    – C-E-G → G-E-C-E-G (bottom played once)
+//   alberti   – classical 1-5-3-5 cycle, triad only; falls back to block if
+//               the chord doesn't have exactly 3 notes (option is disabled
+//               in the editor in that case, but we double-guard here)
+//   tremolo   – the full chord retriggered every `stagger` ms across the
+//               chord's duration
+//   random    – notes shuffled each playback (non-deterministic)
+//
+// All staggered offsets clamp to `duration - 50ms` so even a too-large
+// stagger keeps every note inside the chord's slot.
+function chordToEvents(chord) {
+  if (!chord || chord.notes.length === 0) return [];
+
+  const totalDur = beatsToSeconds(chord.duration);
+  const articulation = chord.articulation || 'block';
+  const staggerSec = Math.max(0.005, (chord.stagger || 60) / 1000);
+
+  const playAsBlock =
+    articulation === 'block'
+    || chord.notes.length <= 1
+    || (articulation === 'alberti' && chord.notes.length !== 3);
+
+  if (playAsBlock) {
+    return chord.notes.map(note => ({ note, offsetSec: 0, durationSec: totalDur }));
   }
 
-  const staggerSec = Math.max(0.005, (chord.stagger || 60) / 1000);
-  const ordered = chord.articulation === 'down'
-    ? [...chord.notes].reverse()
-    : chord.notes;
+  if (articulation === 'tremolo') {
+    const events = [];
+    let t = 0;
+    while (t < totalDur) {
+      const hitDur = Math.min(staggerSec, totalDur - t);
+      chord.notes.forEach(note => events.push({ note, offsetSec: t, durationSec: hitDur }));
+      t += staggerSec;
+    }
+    return events;
+  }
 
-  ordered.forEach((note, i) => {
+  if (articulation === 'alberti') {
+    const [low, mid, high] = chord.notes;
+    const pattern = [low, high, mid, high]; // canonical Alberti figure
+    const events = [];
+    let i = 0;
+    let t = 0;
+    while (t < totalDur) {
+      const note = pattern[i % pattern.length];
+      const noteDur = Math.min(staggerSec, totalDur - t);
+      events.push({ note, offsetSec: t, durationSec: noteDur });
+      t += staggerSec;
+      i++;
+    }
+    return events;
+  }
+
+  // Linear orderings (up / down / updown / downup / random)
+  let order;
+  switch (articulation) {
+    case 'up':
+      order = chord.notes;
+      break;
+    case 'down':
+      order = [...chord.notes].reverse();
+      break;
+    case 'updown':
+      order = chord.notes.length <= 1
+        ? [...chord.notes]
+        : [...chord.notes, ...chord.notes.slice(0, -1).reverse()];
+      break;
+    case 'downup': {
+      if (chord.notes.length <= 1) {
+        order = [...chord.notes];
+      } else {
+        const desc = [...chord.notes].reverse();
+        order = [...desc, ...desc.slice(0, -1).reverse()];
+      }
+      break;
+    }
+    case 'random':
+      order = shuffle(chord.notes);
+      break;
+    default:
+      order = chord.notes;
+  }
+
+  return order.map((note, i) => {
     const rawOffset = i * staggerSec;
-    const offset = Math.min(rawOffset, Math.max(0, durationSec - 0.05));
-    const noteDur = Math.max(0.05, durationSec - offset);
-    synth.triggerAttackRelease(note, noteDur, absoluteStartTime + offset);
+    const offsetSec = Math.min(rawOffset, Math.max(0, totalDur - 0.05));
+    const durationSec = Math.max(0.05, totalDur - offsetSec);
+    return { note, offsetSec, durationSec };
+  });
+}
+
+function scheduleChord(synth, chord, absoluteStartTime) {
+  const events = chordToEvents(chord);
+  events.forEach(({ note, offsetSec, durationSec }) => {
+    synth.triggerAttackRelease(note, durationSec, absoluteStartTime + offsetSec);
   });
 }
 
@@ -545,27 +644,16 @@ function exportMidi() {
 
   let t = 0;
   state.chords.forEach(chord => {
-    const durationSec = beatsToSeconds(chord.duration);
-    if (chord.notes.length > 0) {
-      const isBlock = chord.articulation === 'block' || chord.notes.length <= 1;
-      const staggerSec = Math.max(0.005, (chord.stagger || 60) / 1000);
-      const ordered = chord.articulation === 'down'
-        ? [...chord.notes].reverse()
-        : chord.notes;
-
-      ordered.forEach((note, i) => {
-        const rawOffset = isBlock ? 0 : i * staggerSec;
-        const offset = Math.min(rawOffset, Math.max(0, durationSec - 0.05));
-        const noteDur = Math.max(0.05, durationSec - offset);
-        track.addNote({
-          name: note,
-          time: t + offset,
-          duration: noteDur,
-          velocity: 0.8
-        });
+    const events = chordToEvents(chord);
+    events.forEach(({ note, offsetSec, durationSec }) => {
+      track.addNote({
+        name: note,
+        time: t + offsetSec,
+        duration: durationSec,
+        velocity: 0.8
       });
-    }
-    t += durationSec;
+    });
+    t += beatsToSeconds(chord.duration);
   });
 
   const blob = new Blob([midi.toArray()], { type: 'audio/midi' });
@@ -621,15 +709,29 @@ function buildStaveNoteForClef(chord, clef) {
     if (acc) note.addAccidental(i, new Vex.Flow.Accidental(acc[1]));
   });
 
-  // Arpeggio stroke (the wavy vertical line before the chord) for non-block
-  // articulations. Applied per clef where real notes exist.
-  if (chord.articulation === 'up' || chord.articulation === 'down') {
+  // Notation per articulation. Pyramid/valley reuse the dominant initial
+  // direction's stroke (standard notation has no single symbol for round-trip
+  // arpeggios). Random gets the directionless wavy line. Tremolo gets stem
+  // slashes. Alberti has no canonical stroke — it's a broken-chord pattern,
+  // not a roll — so it renders unmarked.
+  const artic = chord.articulation || 'block';
+  if (artic === 'up' || artic === 'updown') {
     try {
-      const type = chord.articulation === 'down'
-        ? Vex.Flow.Stroke.Type.ROLL_DOWN
-        : Vex.Flow.Stroke.Type.ROLL_UP;
-      note.addStroke(0, new Vex.Flow.Stroke(type));
-    } catch (e) { /* Stroke API may vary between VexFlow versions */ }
+      note.addStroke(0, new Vex.Flow.Stroke(Vex.Flow.Stroke.Type.ROLL_UP));
+    } catch (e) { /* ignore */ }
+  } else if (artic === 'down' || artic === 'downup') {
+    try {
+      note.addStroke(0, new Vex.Flow.Stroke(Vex.Flow.Stroke.Type.ROLL_DOWN));
+    } catch (e) { /* ignore */ }
+  } else if (artic === 'random') {
+    try {
+      note.addStroke(0, new Vex.Flow.Stroke(Vex.Flow.Stroke.Type.ARPEGGIO_DIRECTIONLESS));
+    } catch (e) { /* ignore */ }
+  } else if (artic === 'tremolo') {
+    try {
+      const tremolo = new Vex.Flow.Tremolo(3); // 3 slashes — unmeasured tremolo
+      note.addModifier(0, tremolo);
+    } catch (e) { /* ignore if Tremolo unsupported in this VexFlow build */ }
   }
 
   // Only annotate on the treble so chord names form a consistent top row
@@ -788,7 +890,7 @@ function loadState() {
         notes: Array.isArray(c.notes) ? c.notes : [],
         customName: c.customName || null,
         duration: typeof c.duration === 'number' ? c.duration : 1.0,
-        articulation: ['block', 'up', 'down'].includes(c.articulation) ? c.articulation : 'block',
+        articulation: VALID_ARTICULATIONS.includes(c.articulation) ? c.articulation : 'block',
         stagger: typeof c.stagger === 'number' ? c.stagger : 60
       }));
       state.selectedChordId = data.selectedChordId || state.chords[0].id;
@@ -801,7 +903,11 @@ function loadState() {
 // === Rendering ===
 function renderChordList() {
   const container = document.getElementById('chord-list');
-  container.innerHTML = '';
+  // Keep the persistent "+ Add chord" card; remove only real chord cards
+  // so we can insert the latest set just before the add button.
+  const addBtn = container.querySelector('.chord-card--add');
+  Array.from(container.querySelectorAll('.chord-card:not(.chord-card--add)'))
+    .forEach(c => c.remove());
 
   state.chords.forEach((chord, i) => {
     const card = document.createElement('div');
@@ -814,9 +920,8 @@ function renderChordList() {
     const name = getDisplayName(chord);
     const isEmpty = !name;
 
-    const articSymbol = chord.articulation === 'up'   ? '↑ '
-                       : chord.articulation === 'down' ? '↓ '
-                       : '';
+    const articRaw = ARTICULATION_SYMBOLS[chord.articulation || 'block'] || '';
+    const articSymbol = articRaw ? `${articRaw} ` : '';
     card.innerHTML = `
       <button class="delete-btn" title="Delete chord" aria-label="Delete chord">×</button>
       <div class="name ${isEmpty ? 'empty' : ''}">${escapeHtml(name || '(empty)')}</div>
@@ -861,7 +966,9 @@ function renderChordList() {
       if (fromId && fromId !== chord.id) moveChord(fromId, chord.id);
     });
 
-    container.appendChild(card);
+    // Insert before the persistent "+ Add chord" card so it stays at the end.
+    if (addBtn) container.insertBefore(card, addBtn);
+    else container.appendChild(card);
   });
 }
 
@@ -927,8 +1034,13 @@ function renderEditor() {
   const spreadWrap = document.getElementById('spread-wrap');
   const playChordBtn = document.getElementById('play-chord-btn');
   const clearNotesBtn = document.getElementById('clear-notes-btn');
+  const editorChordName = document.getElementById('editor-chord-name');
 
   if (!chord) {
+    if (editorChordName) {
+      editorChordName.textContent = 'no chord selected';
+      editorChordName.classList.add('empty');
+    }
     notesDisplay.textContent = '—';
     detectedDisplay.textContent = '—';
     customName.value = '';
@@ -940,6 +1052,19 @@ function renderEditor() {
     clearNotesBtn.disabled = true;
     updatePianoSelection();
     return;
+  }
+
+  // Populate the "Editing: <name>" heading so the editor visibly reflects the
+  // currently selected chord card.
+  if (editorChordName) {
+    const editingName = getDisplayName(chord);
+    if (editingName) {
+      editorChordName.textContent = editingName;
+      editorChordName.classList.remove('empty');
+    } else {
+      editorChordName.textContent = 'empty chord';
+      editorChordName.classList.add('empty');
+    }
   }
 
   const lockedForPlayback = state.isPlaying;
@@ -957,6 +1082,17 @@ function renderEditor() {
   if (document.activeElement !== staggerInput) {
     staggerInput.value = chord.stagger != null ? chord.stagger : 60;
   }
+
+  // Alberti is only meaningful for 3-note chords. The option stays in the
+  // dropdown so it's discoverable, but it's disabled when the current chord
+  // isn't a triad — and chordToEvents() falls back to block playback if a
+  // non-triad somehow has alberti set.
+  const albertiOption = articulationSelect.querySelector('option[value="alberti"]');
+  if (albertiOption) albertiOption.disabled = chord.notes.length !== 3;
+
+  // Hide spread input for block (no stagger needed). Alberti on a non-triad
+  // also won't use the spread, but we keep the input visible so the user can
+  // pre-set a value before adding/removing notes to make it a triad.
   spreadWrap.classList.toggle('hidden', articulation === 'block');
 
   notesDisplay.textContent = chord.notes.length > 0
@@ -1087,7 +1223,7 @@ function init() {
     if (state.isPlaying) return;
     const chord = getSelectedChord();
     if (!chord) return;
-    if (['block', 'up', 'down'].includes(e.target.value)) {
+    if (VALID_ARTICULATIONS.includes(e.target.value)) {
       chord.articulation = e.target.value;
       saveState();
       render();

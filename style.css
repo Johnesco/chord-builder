@@ -100,6 +100,39 @@ section {
   color: var(--accent);
   font-weight: 600;
   letter-spacing: 0.01em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* "Editing: <chord name>" heading — pill-style chord name to make the
+   coupling between the selected card and the editor unmistakable. */
+.editor-chord-name {
+  color: var(--accent);
+  background: rgba(255, 107, 157, 0.14);
+  padding: 2px 12px;
+  border-radius: 999px;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  border: 1px solid rgba(255, 107, 157, 0.3);
+}
+
+.editor-chord-name.empty {
+  color: var(--text-dim);
+  background: transparent;
+  border-color: var(--border);
+  font-family: inherit;
+  font-style: italic;
+}
+
+.editor-hint {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  margin-bottom: 14px;
+  font-style: italic;
 }
 
 .progression-controls,
@@ -220,15 +253,9 @@ section {
   border: 1px dashed var(--border);
 }
 
-.chord-list:empty::after {
-  content: 'No chords yet — click "+ Add Chord" to start';
-  color: var(--text-dim);
-  font-style: italic;
-  margin: auto;
-  text-align: center;
-  width: 100%;
-  align-self: center;
-}
+/* The add-chord card lives inside the chord-list as a permanent last child,
+   so the row never has to handle a separate empty state — the "+" card is
+   always the visible affordance for adding a new chord. */
 
 .chord-card {
   width: 110px;
@@ -268,6 +295,47 @@ section {
   border-color: var(--accent);
   box-shadow: 0 0 18px var(--accent);
   animation: pulse 0.55s ease-in-out infinite alternate;
+}
+
+/* "+ Add chord" card — always last child of the chord-list, so the new chord
+   appears immediately to its left when clicked. Visually distinct from real
+   chord cards (dashed border, no name/duration text). */
+.chord-card--add {
+  background: transparent;
+  border: 2px dashed var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0;
+  transition: var(--transition);
+}
+
+.chord-card--add:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgba(255, 107, 157, 0.05);
+  color: var(--accent);
+}
+
+.chord-card--add:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chord-card--add .add-icon {
+  font-size: 1.8rem;
+  font-weight: 300;
+  line-height: 1;
+}
+
+.chord-card--add .add-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
 }
 
 @keyframes pulse {
@@ -326,19 +394,16 @@ section {
   color: var(--text-dim);
 }
 
-/* Export controls (WAV / MIDI / Sheet) */
+/* Export section — its own section near the bottom of the page. */
 .export-controls {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-top: 14px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
 
 .export-label {
-  font-size: 0.85rem;
+  font-size: 0.9rem;
   color: var(--text-dim);
   font-weight: 500;
   margin-right: 4px;
