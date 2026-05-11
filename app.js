@@ -1,100 +1,53 @@
-// === Instruments ===
-// Each preset maps to a Tone.js voice class + options passed to PolySynth.
+// === Instruments (sampled via Tone.Sampler) ===
+// Each preset references a General MIDI soundfont name hosted at midi-js-soundfonts.
+// The `gm` field is the GM patch number, used by the MIDI export so DAWs open
+// the .mid with roughly the same voice.
 const INSTRUMENTS = {
-  piano: {
-    name: 'Piano',
-    voice: 'Synth',
-    options: {
-      oscillator: { type: 'triangle' },
-      envelope: { attack: 0.005, decay: 0.5, sustain: 0.2, release: 1.0 }
-    },
-    volume: -6
-  },
-  organ: {
-    name: 'Organ',
-    voice: 'AMSynth',
-    options: {
-      harmonicity: 2,
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.04, decay: 0.05, sustain: 0.9, release: 0.3 },
-      modulation: { type: 'sine' },
-      modulationEnvelope: { attack: 0.5, decay: 0, sustain: 1, release: 0.5 }
-    },
-    volume: -12
-  },
-  strings: {
-    name: 'Strings',
-    voice: 'Synth',
-    options: {
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.3, decay: 0.1, sustain: 0.8, release: 1.5 }
-    },
-    volume: -8
-  },
-  brass: {
-    name: 'Brass',
-    voice: 'Synth',
-    options: {
-      oscillator: { type: 'sawtooth' },
-      envelope: { attack: 0.08, decay: 0.2, sustain: 0.5, release: 0.6 }
-    },
-    volume: -14
-  },
-  flute: {
-    name: 'Flute',
-    voice: 'Synth',
-    options: {
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.1, decay: 0.1, sustain: 0.6, release: 0.5 }
-    },
-    volume: -6
-  },
-  guitar: {
-    name: 'Guitar (Pluck)',
-    voice: 'PluckSynth',
-    options: {
-      attackNoise: 1,
-      dampening: 4000,
-      resonance: 0.9
-    },
-    volume: -4
-  },
-  bell: {
-    name: 'Bell',
-    voice: 'FMSynth',
-    options: {
-      harmonicity: 3.01,
-      modulationIndex: 14,
-      envelope: { attack: 0.001, decay: 0.8, sustain: 0.1, release: 1.5 },
-      modulation: { type: 'square' },
-      modulationEnvelope: { attack: 0.002, decay: 0.2, sustain: 0, release: 0.2 }
-    },
-    volume: -12
-  },
-  chiptune: {
-    name: 'Chiptune',
-    voice: 'Synth',
-    options: {
-      oscillator: { type: 'square' },
-      envelope: { attack: 0.005, decay: 0.1, sustain: 0.3, release: 0.2 }
-    },
-    volume: -16
-  }
+  piano:          { name: 'Acoustic Piano',     soundfont: 'acoustic_grand_piano',  group: 'Keys',          gm: 0  },
+  electric_piano: { name: 'Electric Piano',     soundfont: 'electric_piano_1',      group: 'Keys',          gm: 4  },
+  harpsichord:    { name: 'Harpsichord',        soundfont: 'harpsichord',           group: 'Keys',          gm: 6  },
+  vibraphone:     { name: 'Vibraphone',         soundfont: 'vibraphone',            group: 'Keys',          gm: 11 },
+  celesta:        { name: 'Celesta',            soundfont: 'celesta',               group: 'Keys',          gm: 8  },
+  church_organ:   { name: 'Church Organ',       soundfont: 'church_organ',          group: 'Organs',        gm: 19 },
+  drawbar_organ:  { name: 'Drawbar Organ',      soundfont: 'drawbar_organ',         group: 'Organs',        gm: 16 },
+  violin:         { name: 'Violin',             soundfont: 'violin',                group: 'Strings',       gm: 40 },
+  cello:          { name: 'Cello',              soundfont: 'cello',                 group: 'Strings',       gm: 42 },
+  strings:        { name: 'String Ensemble',    soundfont: 'string_ensemble_1',     group: 'Strings',       gm: 48 },
+  pizzicato:      { name: 'Pizzicato Strings',  soundfont: 'pizzicato_strings',     group: 'Strings',       gm: 45 },
+  harp:           { name: 'Harp',               soundfont: 'orchestral_harp',       group: 'Strings',       gm: 46 },
+  guitar:         { name: 'Nylon Guitar',       soundfont: 'acoustic_guitar_nylon', group: 'Guitars',       gm: 24 },
+  steel_guitar:   { name: 'Steel Guitar',       soundfont: 'acoustic_guitar_steel', group: 'Guitars',       gm: 25 },
+  trumpet:        { name: 'Trumpet',            soundfont: 'trumpet',               group: 'Brass & Winds', gm: 56 },
+  french_horn:    { name: 'French Horn',        soundfont: 'french_horn',           group: 'Brass & Winds', gm: 60 },
+  flute:          { name: 'Flute',              soundfont: 'flute',                 group: 'Brass & Winds', gm: 73 },
+  clarinet:       { name: 'Clarinet',           soundfont: 'clarinet',              group: 'Brass & Winds', gm: 71 },
+  chiptune:       { name: 'Square Lead',        soundfont: 'lead_1_square',         group: 'Synth',         gm: 80 }
 };
 
 const DEFAULT_INSTRUMENT = 'piano';
 
-// General MIDI patch numbers per instrument preset (for MIDI export)
-const GM_INSTRUMENTS = {
-  piano: 0,     // Acoustic Grand Piano
-  organ: 19,    // Church Organ
-  strings: 48,  // String Ensemble 1
-  brass: 61,    // Brass Section
-  flute: 73,    // Flute
-  guitar: 24,   // Acoustic Guitar (nylon)
-  bell: 14,     // Tubular Bells
-  chiptune: 80  // Lead 1 (square)
+// Old synth-preset keys → closest new sampled-instrument key. Used during
+// localStorage migration so existing users don't see a busted Voice select.
+const INSTRUMENT_MIGRATION = {
+  organ: 'drawbar_organ',
+  brass: 'trumpet',
+  bell:  'vibraphone'
 };
+
+// Sparse sample set covering our piano range (C3–C5) every 3 semitones.
+// Tone.Sampler pitch-shifts between samples for the in-between notes.
+const SAMPLER_URLS = {
+  'C3':  'C3.mp3',
+  'Eb3': 'Eb3.mp3',
+  'Gb3': 'Gb3.mp3',
+  'A3':  'A3.mp3',
+  'C4':  'C4.mp3',
+  'Eb4': 'Eb4.mp3',
+  'Gb4': 'Gb4.mp3',
+  'A4':  'A4.mp3',
+  'C5':  'C5.mp3'
+};
+const SAMPLER_BASE_URL = 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/';
 
 // Sheet-music layout
 const SHEET_MEASURES_PER_SYSTEM = 2;
@@ -118,7 +71,8 @@ const state = {
   instrument: DEFAULT_INSTRUMENT,
   bpm: 120,
   timeSignature: { num: 4, den: 4 },
-  synth: null
+  synth: null,                  // currently-active Tone.Sampler
+  isLoadingInstrument: false    // true while samples for a new voice are downloading
 };
 
 function beatsToSeconds(beats) {
@@ -160,47 +114,81 @@ const BLACK_KEY_WIDTH = 28;
 const MAX_NOTES = 6;
 const STORAGE_KEY = 'chord-builder-state-v1';
 
-// === Audio ===
-function createSynth(instrumentKey) {
+// === Audio (sampled instruments) ===
+//
+// Each instrument is a Tone.Sampler instance loaded lazily on first use and
+// cached for the rest of the session. The cache stores the *promise* (not the
+// resolved sampler) so concurrent requests for the same instrument share a
+// single download. Loading state is signaled via state.isLoadingInstrument
+// so the UI can show "loading…" and disable Play while samples download.
+
+// instrumentKey → Promise<Tone.Sampler>
+const samplerCache = new Map();
+
+function createSampler(soundfontKey) {
+  return new Promise((resolve) => {
+    const sampler = new Tone.Sampler({
+      urls: SAMPLER_URLS,
+      baseUrl: `${SAMPLER_BASE_URL}${soundfontKey}-mp3/`,
+      release: 0.8,
+      onload: () => resolve(sampler)
+    }).toDestination();
+    sampler.volume.value = -6;
+  });
+}
+
+function getSampler(instrumentKey) {
+  if (samplerCache.has(instrumentKey)) {
+    return samplerCache.get(instrumentKey);
+  }
   const preset = INSTRUMENTS[instrumentKey] || INSTRUMENTS[DEFAULT_INSTRUMENT];
-  try {
-    const VoiceClass = Tone[preset.voice] || Tone.Synth;
-    const synth = new Tone.PolySynth(VoiceClass, preset.options).toDestination();
-    synth.volume.value = preset.volume;
-    return synth;
-  } catch (e) {
-    console.warn('Instrument init failed, falling back to default', e);
-    const fb = INSTRUMENTS[DEFAULT_INSTRUMENT];
-    const synth = new Tone.PolySynth(Tone.Synth, fb.options).toDestination();
-    synth.volume.value = fb.volume;
-    return synth;
-  }
+  const promise = createSampler(preset.soundfont);
+  samplerCache.set(instrumentKey, promise);
+  return promise;
 }
 
-function initSynth() {
-  if (!state.synth) {
-    state.synth = createSynth(state.instrument);
-  }
+// Pre-warm a sampler in the background so the first preview/playback doesn't
+// stall on a sample download. Errors are swallowed silently.
+function preloadInstrument(key) {
+  if (!INSTRUMENTS[key]) return;
+  getSampler(key).catch(err => console.warn('Preload failed for', key, err));
 }
 
-function setInstrument(key) {
+async function setInstrument(key) {
   if (!INSTRUMENTS[key]) return;
   state.instrument = key;
   saveState();
 
-  if (state.synth) {
-    try { state.synth.releaseAll(); } catch (e) { /* ignore */ }
-    try { state.synth.dispose(); } catch (e) { /* ignore */ }
-    state.synth = null;
+  state.isLoadingInstrument = true;
+  setInstrumentLoadingUI(true);
+  updatePlayButtons();
+
+  try {
+    const sampler = await getSampler(key);
+    // If the user switched voices again while we were loading, don't clobber
+    // the now-active sampler with this stale one.
+    if (state.instrument === key) {
+      state.synth = sampler;
+    }
+  } catch (e) {
+    console.error('Failed to load instrument', key, e);
+  } finally {
+    state.isLoadingInstrument = false;
+    setInstrumentLoadingUI(false);
+    updatePlayButtons();
   }
-  if (typeof Tone !== 'undefined' && Tone.context && Tone.context.state === 'running') {
-    initSynth();
-  }
+}
+
+function setInstrumentLoadingUI(isLoading) {
+  const ind = document.getElementById('instrument-loading');
+  if (ind) ind.hidden = !isLoading;
 }
 
 async function ensureAudio() {
   await Tone.start();
-  initSynth();
+  if (!state.synth) {
+    state.synth = await getSampler(state.instrument);
+  }
 }
 
 // === Utilities ===
@@ -526,14 +514,24 @@ async function exportWav() {
 
     const preset = INSTRUMENTS[state.instrument] || INSTRUMENTS[DEFAULT_INSTRUMENT];
 
-    const buffer = await Tone.Offline(() => {
-      const VoiceClass = Tone[preset.voice] || Tone.Synth;
-      const synth = new Tone.PolySynth(VoiceClass, preset.options).toDestination();
-      synth.volume.value = preset.volume;
+    // Tone.Offline runs the callback in a fresh OfflineAudioContext, so the
+    // sampler has to be rebuilt and the samples re-downloaded into that
+    // context. The async callback waits for onload before scheduling notes
+    // and returning, which keeps the rendered output deterministic.
+    const buffer = await Tone.Offline(async () => {
+      const sampler = await new Promise((resolve) => {
+        const s = new Tone.Sampler({
+          urls: SAMPLER_URLS,
+          baseUrl: `${SAMPLER_BASE_URL}${preset.soundfont}-mp3/`,
+          release: 0.8,
+          onload: () => resolve(s)
+        }).toDestination();
+        s.volume.value = -6;
+      });
 
       let t = 0;
       state.chords.forEach(chord => {
-        scheduleChord(synth, chord, t);
+        scheduleChord(sampler, chord, t);
         t += beatsToSeconds(chord.duration);
       });
     }, renderDuration);
@@ -639,7 +637,7 @@ function exportMidi() {
   const track = midi.addTrack();
   track.name = INSTRUMENTS[state.instrument]?.name || 'Chords';
   if (track.instrument) {
-    track.instrument.number = GM_INSTRUMENTS[state.instrument] ?? 0;
+    track.instrument.number = INSTRUMENTS[state.instrument]?.gm ?? 0;
   }
 
   let t = 0;
@@ -882,8 +880,11 @@ function loadState() {
     if (!raw) return false;
     const data = JSON.parse(raw);
 
-    if (data.instrument && INSTRUMENTS[data.instrument]) {
-      state.instrument = data.instrument;
+    if (data.instrument) {
+      // Migrate retired synth-preset keys (organ/brass/bell) to their nearest
+      // sampled-instrument equivalent before validating.
+      const migrated = INSTRUMENT_MIGRATION[data.instrument] || data.instrument;
+      if (INSTRUMENTS[migrated]) state.instrument = migrated;
     }
 
     // Migration: old format had no bpm field and stored durations as seconds.
@@ -1133,9 +1134,15 @@ function renderEditor() {
 }
 
 function updatePlayButtons() {
-  document.getElementById('play-all-btn').disabled = state.isPlaying || state.chords.length === 0;
+  const loading = state.isLoadingInstrument;
+  document.getElementById('play-all-btn').disabled = loading || state.isPlaying || state.chords.length === 0;
   document.getElementById('stop-btn').disabled = !state.isPlaying;
   document.getElementById('add-chord-btn').disabled = state.isPlaying;
+  const playChordBtn = document.getElementById('play-chord-btn');
+  if (playChordBtn) {
+    const chord = getSelectedChord();
+    playChordBtn.disabled = loading || state.isPlaying || !chord || chord.notes.length === 0;
+  }
 }
 
 function render() {
@@ -1162,7 +1169,12 @@ function init() {
 
   const instrumentSelect = document.getElementById('instrument-select');
   instrumentSelect.value = state.instrument;
-  instrumentSelect.addEventListener('change', (e) => setInstrument(e.target.value));
+  instrumentSelect.addEventListener('change', (e) => { setInstrument(e.target.value); });
+
+  // Start downloading the active instrument's samples in the background so
+  // the first preview/playback doesn't stall on a network round-trip. The
+  // promise is cached, so a subsequent ensureAudio() will just await it.
+  if (typeof Tone !== 'undefined') preloadInstrument(state.instrument);
 
   const bpmInput = document.getElementById('bpm-input');
   bpmInput.value = state.bpm;

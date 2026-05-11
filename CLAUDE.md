@@ -19,7 +19,7 @@ Everything lives in three files at the repo root:
 No routing, no server, no backend. State persists to `localStorage`.
 
 ### 3. Libraries via CDN (UMD globals)
-- **Tone.js** (v14): `Tone.PolySynth` wraps voice classes like `Tone.Synth`, `Tone.FMSynth`, `Tone.AMSynth`, `Tone.PluckSynth`. Notes scheduled via `triggerAttackRelease`. `Tone.Offline()` is used to render WAV exports.
+- **Tone.js** (v14): `Tone.Sampler` per instrument, loading sampled audio from a public soundfont CDN; notes scheduled via `triggerAttackRelease`. `Tone.Offline()` renders WAV exports (samplers are rebuilt inside the offline context).
 - **Tonal.js** (v5): `Tonal.Chord.detect(pitchClasses)` returns possible chord names for a set of notes.
 - **@tonejs/midi** (v2): exposes `Midi` global, used to build and serialize `.mid` files.
 - **VexFlow** (v3): exposes `Vex.Flow.*` globals, used to render chord progressions as sheet-music SVG.
@@ -57,7 +57,8 @@ state = {
   instrument: string,                // key into INSTRUMENTS map
   bpm: number,                       // 40–300; default 120
   timeSignature: { num, den },       // e.g. {num: 4, den: 4}; default 4/4
-  synth: Tone.PolySynth | null       // lazily created on first audio gesture
+  synth: Tone.Sampler | null,        // active sampler; swapped when Voice changes
+  isLoadingInstrument: boolean       // true while samples for a new voice download
 }
 ```
 
@@ -139,20 +140,48 @@ Current range: C3 – C5 (two octaves plus a trailing C).
 
 ## Instrument Presets (`INSTRUMENTS`)
 
-Eight voices defined in `app.js`. Each maps to a Tone.js voice class name (resolved at runtime via `Tone[name]`) plus options:
+19 sampled voices grouped into 6 families. Each preset references a General MIDI soundfont name (`soundfont` field) and a GM patch number (`gm` field — used by MIDI export so DAWs open with the matching voice).
 
-| Key | Voice Class | Character |
-|---|---|---|
-| `piano` | `Synth` (triangle) | Mellow default |
-| `organ` | `AMSynth` | Sustained |
-| `strings` | `Synth` (sine, slow attack) | Pad-like |
-| `brass` | `Synth` (sawtooth) | Bright |
-| `flute` | `Synth` (sine, medium attack) | Airy |
-| `guitar` | `PluckSynth` | String pluck |
-| `bell` | `FMSynth` | Metallic |
-| `chiptune` | `Synth` (square) | 8-bit |
+| Group | Keys |
+|---|---|
+| Keys | piano, electric_piano, harpsichord, vibraphone, celesta |
+| Organs | church_organ, drawbar_organ |
+| Strings | violin, cello, strings, pizzicato, harp |
+| Guitars | guitar (nylon), steel_guitar |
+| Brass & Winds | trumpet, french_horn, flute, clarinet |
+| Synth | chiptune (square lead) |
 
-Adding a new preset: add an entry to `INSTRUMENTS` and a matching `<option>` in `index.html`. `createSynth()` handles the rest.
+### How playback works
+
+Each instrument is a `Tone.Sampler` loaded lazily from [midi-js-soundfonts/MusyngKite](https://gleitz.github.io/midi-js-soundfonts/MusyngKite/). The URL pattern is:
+
+```
+https://gleitz.github.io/midi-js-soundfonts/MusyngKite/{soundfont}-mp3/{note}.mp3
+```
+
+We load a sparse set (`SAMPLER_URLS`) of 9 samples per instrument covering C3–C5 every ~3 semitones (C, Eb, Gb, A in octaves 3 and 4, plus C5). Tone.Sampler pitch-shifts to fill the gaps; the max interpolation distance is 1.5 semitones, which sounds clean for chord work.
+
+### Lazy load + cache
+
+`samplerCache: Map<instrumentKey, Promise<Tone.Sampler>>` caches the load *promise* (not the resolved sampler), so concurrent requests for the same instrument share one download. `createSampler()` wraps `Tone.Sampler`'s `onload` callback in a Promise; `getSampler(key)` returns the cached promise or starts a new load. `preloadInstrument()` is called on init to kick off the default voice's download in the background.
+
+### Loading-state UI
+
+`state.isLoadingInstrument` toggles around the `await getSampler(...)` in `setInstrument()`. A `#instrument-loading` indicator next to the Voice select shows during loads, and `updatePlayButtons()` disables Play All / Play This Chord while loading. For cached instruments, the loading state appears and disappears within the same microtask — no visible flicker.
+
+### Migration
+
+`INSTRUMENT_MIGRATION` maps the retired synth-preset keys (`organ`, `brass`, `bell`) to their closest sampled equivalents (`drawbar_organ`, `trumpet`, `vibraphone`). `loadState()` runs values through this map before validating, so existing users' saved Voice selection survives the refactor.
+
+### WAV offline render
+
+`Tone.Offline` runs in a fresh `OfflineAudioContext`, so the sampler is recreated and its samples re-downloaded into that context. The `Tone.Offline` callback is async and awaits the sampler's `onload` before scheduling notes, which keeps the rendered audio deterministic. Trade-off: first WAV export per instrument adds ~1–3s of sample-download time.
+
+### Adding a new instrument
+
+1. Add an entry to `INSTRUMENTS` with a valid GM soundfont name (see [the soundfont list](https://github.com/gleitz/midi-js-soundfonts/tree/master/MusyngKite)) and GM patch number.
+2. Add a matching `<option>` inside the appropriate `<optgroup>` in `index.html`.
+3. Done — `getSampler()` handles the rest. No further wiring.
 
 ## Development
 
@@ -207,7 +236,7 @@ Pages rebuilds automatically (~30s). Check status:
 Render window = total progression length + 2s tail for release.
 
 ### MIDI
-`exportMidi()` builds a `Midi` object from `@tonejs/midi`. Each chord becomes one simultaneous group of notes; chord durations map directly (in seconds) to MIDI note durations. `track.instrument.number` is set from `GM_INSTRUMENTS[state.instrument]` so a DAW opens the file with roughly the right patch.
+`exportMidi()` builds a `Midi` object from `@tonejs/midi`. Each chord becomes one simultaneous group of notes; chord durations map directly (in seconds) to MIDI note durations. `track.instrument.number` is set from `INSTRUMENTS[state.instrument].gm` so a DAW opens the file with roughly the right patch.
 
 ### Sheet Music
 `renderSheet()` draws SVG via VexFlow into a modal as a **grand staff** (treble + bass joined by a brace). Each chord's notes split by `MIDDLE_C_MIDI` (60 / C4): notes at or above middle C render on the treble stave, below on the bass. When a clef has no notes for a given chord, a rest of matching duration is placed there. Chord display names are annotated above the treble row only (not doubled on the bass) for a consistent top line of labels.

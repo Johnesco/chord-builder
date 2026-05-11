@@ -207,6 +207,19 @@ section {
   padding: 6px 9px;
 }
 
+.instrument-loading {
+  font-size: 0.8rem;
+  color: var(--accent);
+  font-style: italic;
+  margin-left: 6px;
+  animation: instrument-loading-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes instrument-loading-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
 .progression-settings select,
 #duration-preset {
   background: var(--bg-card-hover);

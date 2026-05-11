@@ -30,15 +30,39 @@
           <label class="setting">
             <span class="setting-label">Voice</span>
             <select id="instrument-select" title="Instrument — changeable during playback">
-              <option value="piano">Piano</option>
-              <option value="organ">Organ</option>
-              <option value="strings">Strings</option>
-              <option value="brass">Brass</option>
-              <option value="flute">Flute</option>
-              <option value="guitar">Guitar (Pluck)</option>
-              <option value="bell">Bell</option>
-              <option value="chiptune">Chiptune</option>
+              <optgroup label="Keys">
+                <option value="piano">Acoustic Piano</option>
+                <option value="electric_piano">Electric Piano</option>
+                <option value="harpsichord">Harpsichord</option>
+                <option value="vibraphone">Vibraphone</option>
+                <option value="celesta">Celesta</option>
+              </optgroup>
+              <optgroup label="Organs">
+                <option value="church_organ">Church Organ</option>
+                <option value="drawbar_organ">Drawbar Organ</option>
+              </optgroup>
+              <optgroup label="Strings">
+                <option value="violin">Violin</option>
+                <option value="cello">Cello</option>
+                <option value="strings">String Ensemble</option>
+                <option value="pizzicato">Pizzicato Strings</option>
+                <option value="harp">Harp</option>
+              </optgroup>
+              <optgroup label="Guitars">
+                <option value="guitar">Nylon Guitar</option>
+                <option value="steel_guitar">Steel Guitar</option>
+              </optgroup>
+              <optgroup label="Brass &amp; Winds">
+                <option value="trumpet">Trumpet</option>
+                <option value="french_horn">French Horn</option>
+                <option value="flute">Flute</option>
+                <option value="clarinet">Clarinet</option>
+              </optgroup>
+              <optgroup label="Synth">
+                <option value="chiptune">Square Lead (chiptune)</option>
+              </optgroup>
             </select>
+            <span id="instrument-loading" class="instrument-loading" hidden>loading&hellip;</span>
           </label>
           <label class="setting">
             <span class="setting-label">BPM</span>
