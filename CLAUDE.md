@@ -249,6 +249,21 @@ Duration mapping: seconds to VexFlow note values assuming 60 BPM (1s = 1 beat). 
 
 Printing: the Print button adds `body.printing-sheet`, which a `@media print` block uses to hide everything except the modal's sheet body. `afterprint` removes the class. "Save as PDF" is available by choosing it as the print destination.
 
+## Architecture Decision Records
+
+Significant architectural choices are recorded in [`docs/adr/`](docs/adr/README.md). Read these before making changes that might conflict with an established decision.
+
+Current ADRs:
+- [ADR-001](docs/adr/001-vanilla-js-no-build.md) — Vanilla JS, CDN libraries, no build step
+- [ADR-002](docs/adr/002-tonejs-audio-engine.md) — Tone.js as the audio engine
+- [ADR-003](docs/adr/003-sampled-instruments.md) — Sampled instruments via Tone.Sampler + midi-js-soundfonts
+- [ADR-004](docs/adr/004-beats-time-model.md) — Chord duration in beats with BPM and time signature
+- [ADR-005](docs/adr/005-per-chord-articulation.md) — Per-chord articulation as a first-class field
+- [ADR-006](docs/adr/006-chord-to-events-contract.md) — `chordToEvents()` as the single playback/export contract
+- [ADR-007](docs/adr/007-vexflow-grand-staff.md) — VexFlow for sheet music with a grand-staff layout
+- [ADR-008](docs/adr/008-localstorage-persistence.md) — localStorage persistence with explicit schema migration
+- [ADR-009](docs/adr/009-github-pages-deploy.md) — GitHub Pages from `main` as deployment target
+
 ## What This Project Is NOT
 - Not a DAW. No multi-track, no mixing, no export-to-audio.
 - Not a sheet-music editor. No notation rendering.
