@@ -402,6 +402,25 @@ function removeChord(id) {
   render();
 }
 
+function duplicateChord(id) {
+  if (state.isPlaying) return;
+  const idx = state.chords.findIndex(c => c.id === id);
+  if (idx === -1) return;
+  const src = state.chords[idx];
+  const copy = {
+    id: uid(),
+    notes: [...src.notes],
+    customName: src.customName,
+    duration: src.duration,
+    articulation: src.articulation,
+    stagger: src.stagger
+  };
+  state.chords.splice(idx + 1, 0, copy);
+  state.selectedChordId = copy.id;
+  saveState();
+  render();
+}
+
 function moveChord(fromId, toId) {
   if (state.isPlaying) return;
   const fromIdx = state.chords.findIndex(c => c.id === fromId);
@@ -939,6 +958,7 @@ function renderChordList() {
     const articRaw = ARTICULATION_SYMBOLS[chord.articulation || 'block'] || '';
     const articSymbol = articRaw ? `${articRaw} ` : '';
     card.innerHTML = `
+      <button class="copy-btn" title="Duplicate chord" aria-label="Duplicate chord">+</button>
       <button class="delete-btn" title="Delete chord" aria-label="Delete chord">×</button>
       <div class="name ${isEmpty ? 'empty' : ''}">${escapeHtml(name || '(empty)')}</div>
       <div class="duration">${articSymbol}${formatBeats(chord.duration)}</div>
@@ -947,6 +967,7 @@ function renderChordList() {
     card.addEventListener('click', (e) => {
       if (state.isPlaying) return;
       if (e.target.closest('.delete-btn')) return;
+      if (e.target.closest('.copy-btn')) return;
       state.selectedChordId = chord.id;
       saveState();
       render();
@@ -955,6 +976,11 @@ function renderChordList() {
     card.querySelector('.delete-btn').addEventListener('click', (e) => {
       e.stopPropagation();
       removeChord(chord.id);
+    });
+
+    card.querySelector('.copy-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      duplicateChord(chord.id);
     });
 
     card.addEventListener('dragstart', (e) => {

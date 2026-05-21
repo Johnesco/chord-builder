@@ -375,14 +375,13 @@ section {
   margin-top: 4px;
 }
 
-.chord-card .delete-btn {
+.chord-card .delete-btn,
+.chord-card .copy-btn {
   position: absolute;
   top: 4px;
-  right: 4px;
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  background: rgba(255, 80, 80, 0.7);
   border: none;
   color: white;
   cursor: pointer;
@@ -394,12 +393,27 @@ section {
   justify-content: center;
 }
 
-.chord-card:hover .delete-btn {
+.chord-card .delete-btn {
+  right: 4px;
+  background: rgba(255, 80, 80, 0.7);
+}
+
+.chord-card .copy-btn {
+  right: 28px;
+  background: rgba(108, 124, 224, 0.7);
+}
+
+.chord-card:hover .delete-btn,
+.chord-card:hover .copy-btn {
   display: flex;
 }
 
 .chord-card .delete-btn:hover {
   background: rgb(255, 60, 60);
+}
+
+.chord-card .copy-btn:hover {
+  background: rgb(108, 124, 224);
 }
 
 .hint {
