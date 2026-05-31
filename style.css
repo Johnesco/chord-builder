@@ -176,6 +176,21 @@ section {
   cursor: not-allowed;
 }
 
+/* Compact button modifier — used inline next to settings (e.g. Transpose
+   arrows in the progression-settings row), where the standard .btn padding
+   feels oversized. */
+.btn.btn--compact {
+  padding: 5px 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.transpose-controls {
+  display: inline-flex;
+  gap: 4px;
+}
+
 /* Progression settings (Voice / BPM / Time sig) */
 .progression-settings {
   display: flex;

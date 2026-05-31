@@ -79,6 +79,13 @@
               <option value="7/8">7/8</option>
             </select>
           </label>
+          <label class="setting">
+            <span class="setting-label">Transpose</span>
+            <span class="transpose-controls">
+              <button id="transpose-down-btn" class="btn btn--compact" type="button" title="Transpose every chord down one semitone" aria-label="Transpose down one semitone">▼</button>
+              <button id="transpose-up-btn" class="btn btn--compact" type="button" title="Transpose every chord up one semitone" aria-label="Transpose up one semitone">▲</button>
+            </span>
+          </label>
         </div>
         <div id="chord-list" class="chord-list">
           <button id="add-chord-btn" class="chord-card chord-card--add" type="button" title="Add a new chord at the end of the progression">
@@ -86,7 +93,7 @@
             <span class="add-label">Add chord</span>
           </button>
         </div>
-        <p class="hint">Drag cards to reorder &middot; click a card to edit it &middot; hover for delete &middot; <kbd>Space</kbd> to play/stop</p>
+        <p class="hint">Drag to reorder &middot; click to edit &middot; hover to duplicate / delete &middot; <kbd>Space</kbd> to play/stop</p>
       </section>
 
       <section class="editor-section" id="editor-section">

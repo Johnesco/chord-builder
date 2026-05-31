@@ -212,6 +212,13 @@ function noteToMidi(note) {
   return (parseInt(m[3], 10) + 1) * 12 + n;
 }
 
+const MIDI_NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+function midiToNote(midi) {
+  const octave = Math.floor(midi / 12) - 1;
+  const semi = ((midi % 12) + 12) % 12;
+  return `${MIDI_NOTE_NAMES[semi]}${octave}`;
+}
+
 function sortNotes(notes) {
   return [...notes].sort((a, b) => noteToMidi(a) - noteToMidi(b));
 }
@@ -387,6 +394,7 @@ function addChord() {
   state.selectedChordId = chord.id;
   saveState();
   render();
+  scrollChordIntoView(chord.id);
 }
 
 function removeChord(id) {
@@ -419,6 +427,45 @@ function duplicateChord(id) {
   state.selectedChordId = copy.id;
   saveState();
   render();
+  scrollChordIntoView(copy.id);
+}
+
+// === Transpose ===
+// Shift every note in every chord by N semitones. Bounded so every note stays
+// inside the displayed piano (C3–C5) — otherwise the user couldn't see/edit
+// the result on the piano. customName is preserved deliberately: it's the
+// user's label and may be a non-name annotation like "intro". The auto-
+// detected name re-derives from the transposed notes via getDisplayName.
+const TRANSPOSE_MIN_MIDI = 48; // C3
+const TRANSPOSE_MAX_MIDI = 72; // C5
+
+function canTranspose(semitones) {
+  if (state.chords.length === 0) return false;
+  return state.chords.every(chord =>
+    chord.notes.every(note => {
+      const m = noteToMidi(note) + semitones;
+      return m >= TRANSPOSE_MIN_MIDI && m <= TRANSPOSE_MAX_MIDI;
+    })
+  );
+}
+
+function transposeProgression(semitones) {
+  if (state.isPlaying) return;
+  if (!canTranspose(semitones)) return;
+  state.chords.forEach(chord => {
+    chord.notes = sortNotes(
+      chord.notes.map(n => midiToNote(noteToMidi(n) + semitones))
+    );
+  });
+  saveState();
+  render();
+}
+
+function scrollChordIntoView(id) {
+  const card = document.querySelector(`.chord-card[data-id="${id}"]`);
+  if (card && typeof card.scrollIntoView === 'function') {
+    card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+  }
 }
 
 function moveChord(fromId, toId) {
@@ -1132,10 +1179,14 @@ function renderEditor() {
   const albertiOption = articulationSelect.querySelector('option[value="alberti"]');
   if (albertiOption) albertiOption.disabled = chord.notes.length !== 3;
 
-  // Hide spread input for block (no stagger needed). Alberti on a non-triad
-  // also won't use the spread, but we keep the input visible so the user can
-  // pre-set a value before adding/removing notes to make it a triad.
-  spreadWrap.classList.toggle('hidden', articulation === 'block');
+  // Hide spread input when it can't do anything: block articulation (no
+  // stagger), or single-note chords (nothing to stagger between). Alberti on
+  // a non-triad still shows it so the user can preset a value before adding
+  // the third note.
+  spreadWrap.classList.toggle(
+    'hidden',
+    articulation === 'block' || chord.notes.length <= 1
+  );
 
   notesDisplay.textContent = chord.notes.length > 0
     ? chord.notes.join(', ')
@@ -1164,6 +1215,13 @@ function updatePlayButtons() {
   document.getElementById('play-all-btn').disabled = loading || state.isPlaying || state.chords.length === 0;
   document.getElementById('stop-btn').disabled = !state.isPlaying;
   document.getElementById('add-chord-btn').disabled = state.isPlaying;
+
+  // Transpose buttons disable at the piano edges and during playback.
+  const transposeDownBtn = document.getElementById('transpose-down-btn');
+  const transposeUpBtn = document.getElementById('transpose-up-btn');
+  if (transposeDownBtn) transposeDownBtn.disabled = state.isPlaying || !canTranspose(-1);
+  if (transposeUpBtn) transposeUpBtn.disabled = state.isPlaying || !canTranspose(1);
+
   const playChordBtn = document.getElementById('play-chord-btn');
   if (playChordBtn) {
     const chord = getSelectedChord();
@@ -1221,6 +1279,10 @@ function init() {
       saveState();
     }
   });
+
+  // Transpose buttons shift every chord by ±1 semitone, bounded by the piano.
+  document.getElementById('transpose-down-btn').addEventListener('click', () => transposeProgression(-1));
+  document.getElementById('transpose-up-btn').addEventListener('click', () => transposeProgression(1));
 
   document.getElementById('add-chord-btn').addEventListener('click', addChord);
   document.getElementById('play-all-btn').addEventListener('click', playProgression);
