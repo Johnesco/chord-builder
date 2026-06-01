@@ -71,6 +71,7 @@ const state = {
   instrument: DEFAULT_INSTRUMENT,
   bpm: 120,
   timeSignature: { num: 4, den: 4 },
+  transposeAll: true,           // false = transpose only the selected chord
   synth: null,                  // currently-active Tone.Sampler
   isLoadingInstrument: false    // true while samples for a new voice are downloading
 };
@@ -431,28 +432,41 @@ function duplicateChord(id) {
 }
 
 // === Transpose ===
-// Shift every note in every chord by N semitones. Bounded so every note stays
-// inside the displayed piano (C3–C5) — otherwise the user couldn't see/edit
-// the result on the piano. customName is preserved deliberately: it's the
-// user's label and may be a non-name annotation like "intro". The auto-
-// detected name re-derives from the transposed notes via getDisplayName.
+// Shift notes by N semitones. Scope is governed by state.transposeAll:
+//   true  → every chord in the progression
+//   false → only the currently selected chord
+// Bounded so every transposed note stays inside the displayed piano (C3–C5)
+// — otherwise the user couldn't see/edit the result on the piano. customName
+// is preserved deliberately: it's the user's label and may be a non-name
+// annotation like "intro". The auto-detected name re-derives from the
+// transposed notes via getDisplayName.
 const TRANSPOSE_MIN_MIDI = 48; // C3
 const TRANSPOSE_MAX_MIDI = 72; // C5
 
+function chordsToTranspose() {
+  if (state.transposeAll) return state.chords;
+  const selected = getSelectedChord();
+  return selected ? [selected] : [];
+}
+
 function canTranspose(semitones) {
-  if (state.chords.length === 0) return false;
-  return state.chords.every(chord =>
-    chord.notes.every(note => {
+  const targets = chordsToTranspose();
+  if (targets.length === 0) return false;
+  let hasAnyNote = false;
+  for (const chord of targets) {
+    for (const note of chord.notes) {
+      hasAnyNote = true;
       const m = noteToMidi(note) + semitones;
-      return m >= TRANSPOSE_MIN_MIDI && m <= TRANSPOSE_MAX_MIDI;
-    })
-  );
+      if (m < TRANSPOSE_MIN_MIDI || m > TRANSPOSE_MAX_MIDI) return false;
+    }
+  }
+  return hasAnyNote;
 }
 
 function transposeProgression(semitones) {
   if (state.isPlaying) return;
   if (!canTranspose(semitones)) return;
-  state.chords.forEach(chord => {
+  chordsToTranspose().forEach(chord => {
     chord.notes = sortNotes(
       chord.notes.map(n => midiToNote(noteToMidi(n) + semitones))
     );
@@ -935,7 +949,8 @@ function saveState() {
       selectedChordId: state.selectedChordId,
       instrument: state.instrument,
       bpm: state.bpm,
-      timeSignature: state.timeSignature
+      timeSignature: state.timeSignature,
+      transposeAll: state.transposeAll
     }));
   } catch (e) { /* quota or disabled — ignore */ }
 }
@@ -964,6 +979,10 @@ function loadState() {
 
     if (data.timeSignature && typeof data.timeSignature.num === 'number') {
       state.timeSignature = data.timeSignature;
+    }
+
+    if (typeof data.transposeAll === 'boolean') {
+      state.transposeAll = data.transposeAll;
     }
 
     if (Array.isArray(data.chords) && data.chords.length > 0) {
@@ -1280,9 +1299,19 @@ function init() {
     }
   });
 
-  // Transpose buttons shift every chord by ±1 semitone, bounded by the piano.
+  // Transpose buttons shift by ±1 semitone, bounded by the piano. The "all"
+  // checkbox toggles between "every chord" and "only the selected chord".
   document.getElementById('transpose-down-btn').addEventListener('click', () => transposeProgression(-1));
   document.getElementById('transpose-up-btn').addEventListener('click', () => transposeProgression(1));
+
+  const transposeAllCheckbox = document.getElementById('transpose-all-checkbox');
+  transposeAllCheckbox.checked = state.transposeAll;
+  transposeAllCheckbox.addEventListener('change', (e) => {
+    state.transposeAll = e.target.checked;
+    saveState();
+    // The set of in-range targets just changed — refresh button enabled state.
+    updatePlayButtons();
+  });
 
   document.getElementById('add-chord-btn').addEventListener('click', addChord);
   document.getElementById('play-all-btn').addEventListener('click', playProgression);

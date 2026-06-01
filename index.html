@@ -79,13 +79,17 @@
               <option value="7/8">7/8</option>
             </select>
           </label>
-          <label class="setting">
+          <div class="setting">
             <span class="setting-label">Transpose</span>
+            <label class="transpose-scope" title="Checked: transpose every chord. Unchecked: transpose only the selected chord.">
+              <input type="checkbox" id="transpose-all-checkbox" checked />
+              <span>all</span>
+            </label>
             <span class="transpose-controls">
-              <button id="transpose-down-btn" class="btn btn--compact" type="button" title="Transpose every chord down one semitone" aria-label="Transpose down one semitone">▼</button>
-              <button id="transpose-up-btn" class="btn btn--compact" type="button" title="Transpose every chord up one semitone" aria-label="Transpose up one semitone">▲</button>
+              <button id="transpose-down-btn" class="btn btn--compact" type="button" title="Transpose down one semitone" aria-label="Transpose down one semitone">▼</button>
+              <button id="transpose-up-btn" class="btn btn--compact" type="button" title="Transpose up one semitone" aria-label="Transpose up one semitone">▲</button>
             </span>
-          </label>
+          </div>
         </div>
         <div id="chord-list" class="chord-list">
           <button id="add-chord-btn" class="chord-card chord-card--add" type="button" title="Add a new chord at the end of the progression">

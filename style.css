@@ -191,6 +191,24 @@ section {
   gap: 4px;
 }
 
+/* "all" checkbox sitting between the Transpose label and the ▼ ▲ buttons.
+   Scopes whether the buttons act on every chord or just the selected one. */
+.transpose-scope {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  user-select: none;
+}
+
+.transpose-scope input[type="checkbox"] {
+  accent-color: var(--accent);
+  cursor: pointer;
+  margin: 0;
+}
+
 /* Progression settings (Voice / BPM / Time sig) */
 .progression-settings {
   display: flex;
