@@ -7,8 +7,9 @@
   <link rel="stylesheet" href="style.css">
   <script src="https://unpkg.com/tone@14.8.49/build/Tone.js"></script>
   <script src="https://unpkg.com/tonal@5.1.3/browser/tonal.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/build/Midi.js"></script>
-  <script src="https://unpkg.com/vexflow@3.0.9/releases/vexflow-min.js"></script>
+  <!-- VexFlow (sheet music) and @tonejs/midi (MIDI export) are lazy-loaded
+       by app.js on first use — see loadScript() -->
+
 </head>
 <body>
   <div class="app">
@@ -22,6 +23,8 @@
         <div class="section-header">
           <h2>Progression</h2>
           <div class="progression-controls">
+            <button id="undo-btn" class="btn btn-secondary btn--compact" title="Undo (Ctrl+Z)" aria-label="Undo" disabled>↺</button>
+            <button id="redo-btn" class="btn btn-secondary btn--compact" title="Redo (Ctrl+Y)" aria-label="Redo" disabled>↻</button>
             <button id="play-all-btn" class="btn btn-primary">▶ Play All</button>
             <button id="stop-btn" class="btn btn-secondary" disabled>⏹ Stop</button>
           </div>
@@ -97,7 +100,7 @@
             <span class="add-label">Add chord</span>
           </button>
         </div>
-        <p class="hint">Drag to reorder &middot; click to edit &middot; hover to duplicate / delete &middot; <kbd>Space</kbd> to play/stop</p>
+        <p class="hint">Drag to reorder &middot; click to edit &middot; hover to duplicate / delete &middot; <kbd>Space</kbd> play/stop &middot; <kbd>&larr;</kbd>/<kbd>&rarr;</kbd> select &middot; <kbd>Del</kbd> remove &middot; <kbd>Ctrl</kbd>+<kbd>D</kbd> duplicate &middot; <kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</p>
       </section>
 
       <section class="editor-section" id="editor-section">

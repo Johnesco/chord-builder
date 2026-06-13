@@ -19,10 +19,12 @@ Everything lives in three files at the repo root:
 No routing, no server, no backend. State persists to `localStorage`.
 
 ### 3. Libraries via CDN (UMD globals)
-- **Tone.js** (v14): `Tone.Sampler` per instrument, loading sampled audio from a public soundfont CDN; notes scheduled via `triggerAttackRelease`. `Tone.Offline()` renders WAV exports (samplers are rebuilt inside the offline context).
-- **Tonal.js** (v5): `Tonal.Chord.detect(pitchClasses)` returns possible chord names for a set of notes.
-- **@tonejs/midi** (v2): exposes `Midi` global, used to build and serialize `.mid` files.
-- **VexFlow** (v3): exposes `Vex.Flow.*` globals, used to render chord progressions as sheet-music SVG.
+- **Tone.js** (v14): `Tone.Sampler` per instrument, loading sampled audio from a public soundfont CDN; notes scheduled via `triggerAttackRelease`. `Tone.Offline()` renders WAV exports (samplers are rebuilt inside the offline context). Loaded eagerly in `index.html`.
+- **Tonal.js** (v5): `Tonal.Chord.detect(pitchClasses)` returns possible chord names for a set of notes. Loaded eagerly in `index.html`.
+- **@tonejs/midi** (v2): exposes `Midi` global, used to build and serialize `.mid` files. **Lazy-loaded** by `loadScript()` on first MIDI export.
+- **VexFlow** (v3): exposes `Vex.Flow.*` globals, used to render chord progressions as sheet-music SVG. **Lazy-loaded** by `loadScript()` on first sheet-music open.
+
+Lazy loading mirrors the sampler cache: `scriptPromises: Map<src, Promise>` stores the load *promise* so concurrent calls share one download; a failed load is evicted so retry works. The export buttons show a loading state while the script downloads.
 
 ## File Structure
 
@@ -57,12 +59,13 @@ state = {
   instrument: string,                // key into INSTRUMENTS map
   bpm: number,                       // 40–300; default 120
   timeSignature: { num, den },       // e.g. {num: 4, den: 4}; default 4/4
+  transposeAll: boolean,             // transpose scope: true = all chords, false = selected only
   synth: Tone.Sampler | null,        // active sampler; swapped when Voice changes
   isLoadingInstrument: boolean       // true while samples for a new voice download
 }
 ```
 
-Persisted keys: `chords`, `selectedChordId`, `instrument`, `bpm`, `timeSignature`. LocalStorage key: `chord-builder-state-v1`.
+Persisted keys: `chords`, `selectedChordId`, `instrument`, `bpm`, `timeSignature`, `transposeAll`. LocalStorage key: `chord-builder-state-v1`.
 
 ### Time model — beats, not seconds
 
@@ -123,6 +126,21 @@ Trade-off: setTimeout timing is slightly less precise than Tone.Transport, but f
 - JS: every mutator (`addChord`, `removeChord`, `moveChord`, `toggleNote`, `clearNotes`, input handlers) guards with `if (state.isPlaying) return;`
 - CSS: `body.is-playing` disables `pointer-events` on `.chord-card`, `.piano-wrapper`, `.editor-controls`, `.chord-info`
 - Instrument select stays live (the whole point of the feature)
+
+### Undo / Redo
+`undoHistory = { past: [], future: [] }` holds snapshots of the *composition* (`chords` + `selectedChordId`) — global settings (BPM, voice, time signature, transpose scope) are deliberately outside history. Every mutator calls `pushHistory()` before changing state; capacity is `HISTORY_LIMIT` (50). High-frequency text inputs pass a tag (`name:<chordId>`) so a typing burst coalesces into one undo step; `resetHistoryCoalescing()` on selection change breaks the merge. Inside text inputs the browser's native undo applies (the global handler skips form controls). UI: ↺/↻ buttons in the progression header + Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y.
+
+### Transpose
+▼/▲ buttons in the progression settings shift notes ±1 semitone. Scope is `state.transposeAll` ("all" checkbox): every chord, or just the selected one. `canTranspose(semitones)` bounds the shift so every affected note stays on the displayed piano (MIDI 48–72, C3–C5) — buttons disable at the edges. `customName` is preserved (it may be a label like "intro"); detected names re-derive automatically.
+
+### Targeted card updates (perf)
+The custom-name / duration / stagger input handlers call `updateChordCard(chord)` + `updateEditorChordName(chord)` instead of `renderChordList()` — each keystroke patches text nodes rather than rebuilding every card and re-attaching listeners. Structural changes (add/remove/move/duplicate/transpose) still do a full `render()`.
+
+### Drag & drop reorder
+`moveChordBefore(fromId, targetId)` — the dragged chord is inserted **before** the drop target in both drag directions, matching the insertion-line indicator (`.drag-over::before`). `targetId === null` = move to end; the persistent add-chord card doubles as the end-of-list drop zone. No-op moves are detected pre-mutation and skipped so they don't pollute undo history.
+
+### Keyboard shortcuts
+Global (skipped while focus is in an input/select/textarea): `Space` play/stop · `Esc` close modal, else stop playback · `←`/`→` select previous/next chord · `Del`/`Backspace` remove selected · `Ctrl+D` duplicate selected · `Ctrl+Z` undo · `Ctrl+Shift+Z`/`Ctrl+Y` redo. Chord cards are tabbable (`role="button"`, `aria-pressed`); `Enter` selects a focused card, and the hover-revealed ＋/× buttons also appear on `:focus-within`. Touch devices (`hover: none`) show the card buttons permanently at 24px.
 
 ### Chord Detection
 `detectChordNames(notes)` strips octaves (`C4` → `C`), dedupes, and passes to `Tonal.Chord.detect(pcs)`. Returns an array like `["CM"]` or `["CM7", "Em#5/C"]`. First result is used as the default display name; `customName` overrides.
@@ -245,7 +263,7 @@ Layout is driven by the time signature: `groupChordsIntoMeasures()` accumulates 
 
 Long chords crossing measure boundaries aren't tied across barlines yet — they're placed entirely in whichever measure the greedy grouper lands them in. This is a known v1 simplification.
 
-Duration mapping: seconds to VexFlow note values assuming 60 BPM (1s = 1 beat). Anything ≥ 3s = whole, ≥ 1.5s = half, ≥ 0.75s = quarter, ≥ 0.375s = eighth, else sixteenth.
+Duration mapping (`durationToVex`): beats → VexFlow code + dot. 4 = whole, 2 = half, 1 = quarter, 0.5 = eighth, 0.25 = sixteenth; the ×1.5 values render dotted (6 = w., 3 = h., 1.5 = q., 0.75 = 8., 0.375 = 16.). In-between values round down to the nearest plain note. `makeSheetNote()` handles the dotted construction (duration string `'qd'` for ticks + `addDotToAll()` for the glyph) with an undotted fallback if the VexFlow build rejects it; dotted rests work the same way.
 
 Printing: the Print button adds `body.printing-sheet`, which a `@media print` block uses to hide everything except the modal's sheet body. `afterprint` removes the class. "Save as PDF" is available by choosing it as the print destination.
 

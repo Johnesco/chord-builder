@@ -49,6 +49,35 @@ const SAMPLER_URLS = {
 };
 const SAMPLER_BASE_URL = 'https://gleitz.github.io/midi-js-soundfonts/MusyngKite/';
 
+// === Lazy-loaded CDN libraries ===
+// VexFlow (sheet music) and @tonejs/midi (MIDI export) are only needed when
+// the user actually exports, so they're injected on first use instead of
+// blocking initial page load. Mirrors the sampler-cache pattern: the Map
+// stores the load *promise* so concurrent calls share one download. A failed
+// load is evicted so a later retry gets a fresh attempt.
+const VEXFLOW_SRC = 'https://unpkg.com/vexflow@3.0.9/releases/vexflow-min.js';
+const MIDI_LIB_SRC = 'https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/build/Midi.js';
+
+const scriptPromises = new Map();
+
+function loadScript(src) {
+  if (scriptPromises.has(src)) return scriptPromises.get(src);
+  const promise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => {
+      scriptPromises.delete(src);
+      s.remove();
+      reject(new Error(`Failed to load ${src}`));
+    };
+    document.head.appendChild(s);
+  });
+  scriptPromises.set(src, promise);
+  return promise;
+}
+
 // Sheet-music layout
 const SHEET_MEASURES_PER_SYSTEM = 2;
 const SHEET_MEASURE_WIDTH = 300; // approximate — Formatter adjusts
@@ -162,7 +191,7 @@ async function setInstrument(key) {
 
   state.isLoadingInstrument = true;
   setInstrumentLoadingUI(true);
-  updatePlayButtons();
+  updateControls();
 
   try {
     const sampler = await getSampler(key);
@@ -176,7 +205,7 @@ async function setInstrument(key) {
   } finally {
     state.isLoadingInstrument = false;
     setInstrumentLoadingUI(false);
-    updatePlayButtons();
+    updateControls();
   }
 }
 
@@ -387,9 +416,65 @@ function getDisplayName(chord) {
   return '?';
 }
 
+// === Undo / Redo ===
+// History covers the *composition* (chords + selection) — not global settings
+// like BPM, time signature, voice, or transpose scope. Each user action is one
+// undo step; continuous typing into the same field coalesces into a single
+// step via tags (e.g. 'name:<chordId>'), so undo restores the pre-typing
+// value instead of stepping back one character at a time. Inside text inputs
+// the browser's native undo applies — the global Ctrl+Z handler skips inputs.
+const HISTORY_LIMIT = 50;
+const undoHistory = { past: [], future: [] };
+let lastHistoryTag = null;
+
+function snapshotComposition() {
+  return {
+    chords: JSON.parse(JSON.stringify(state.chords)),
+    selectedChordId: state.selectedChordId
+  };
+}
+
+function pushHistory(tag = null) {
+  if (tag !== null && tag === lastHistoryTag) return;
+  undoHistory.past.push(snapshotComposition());
+  if (undoHistory.past.length > HISTORY_LIMIT) undoHistory.past.shift();
+  undoHistory.future.length = 0;
+  lastHistoryTag = tag;
+  updateControls(); // enable the undo button even on targeted (non-render) updates
+}
+
+// Selection changes break coalescing so "edit A, click B, click A, edit A
+// again" produces two undo steps, not one merged step.
+function resetHistoryCoalescing() {
+  lastHistoryTag = null;
+}
+
+function applySnapshot(snap) {
+  state.chords = snap.chords;
+  state.selectedChordId = snap.selectedChordId;
+  saveState();
+  render();
+}
+
+function undo() {
+  if (state.isPlaying || undoHistory.past.length === 0) return;
+  undoHistory.future.push(snapshotComposition());
+  applySnapshot(undoHistory.past.pop());
+  resetHistoryCoalescing();
+}
+
+function redo() {
+  if (state.isPlaying || undoHistory.future.length === 0) return;
+  undoHistory.past.push(snapshotComposition());
+  if (undoHistory.past.length > HISTORY_LIMIT) undoHistory.past.shift();
+  applySnapshot(undoHistory.future.pop());
+  resetHistoryCoalescing();
+}
+
 // === Mutations (blocked during playback to avoid timing chaos) ===
 function addChord() {
   if (state.isPlaying) return;
+  pushHistory();
   const chord = createChord();
   state.chords.push(chord);
   state.selectedChordId = chord.id;
@@ -402,6 +487,7 @@ function removeChord(id) {
   if (state.isPlaying) return;
   const idx = state.chords.findIndex(c => c.id === id);
   if (idx === -1) return;
+  pushHistory();
   state.chords.splice(idx, 1);
   if (state.selectedChordId === id) {
     const next = state.chords[Math.min(idx, state.chords.length - 1)];
@@ -415,6 +501,7 @@ function duplicateChord(id) {
   if (state.isPlaying) return;
   const idx = state.chords.findIndex(c => c.id === id);
   if (idx === -1) return;
+  pushHistory();
   const src = state.chords[idx];
   const copy = {
     id: uid(),
@@ -466,6 +553,7 @@ function canTranspose(semitones) {
 function transposeProgression(semitones) {
   if (state.isPlaying) return;
   if (!canTranspose(semitones)) return;
+  pushHistory();
   chordsToTranspose().forEach(chord => {
     chord.notes = sortNotes(
       chord.notes.map(n => midiToNote(noteToMidi(n) + semitones))
@@ -478,19 +566,57 @@ function transposeProgression(semitones) {
 function scrollChordIntoView(id) {
   const card = document.querySelector(`.chord-card[data-id="${id}"]`);
   if (card && typeof card.scrollIntoView === 'function') {
-    card.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    const reduceMotion = window.matchMedia
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    card.scrollIntoView({
+      behavior: reduceMotion ? 'auto' : 'smooth',
+      block: 'nearest',
+      inline: 'nearest'
+    });
   }
 }
 
-function moveChord(fromId, toId) {
+// Drag-and-drop reorder: the dragged chord is inserted *before* the drop
+// target (matching the insertion-line indicator), regardless of drag
+// direction. targetId === null means "move to end" — the add-chord card and
+// any other end-of-list drop zone use it.
+function moveChordBefore(fromId, targetId) {
   if (state.isPlaying) return;
   const fromIdx = state.chords.findIndex(c => c.id === fromId);
-  const toIdx = state.chords.findIndex(c => c.id === toId);
-  if (fromIdx === -1 || toIdx === -1 || fromIdx === toIdx) return;
+  if (fromIdx === -1 || fromId === targetId) return;
+
+  // Insertion index in the array *after* the dragged chord is removed.
+  let toIdx;
+  if (targetId === null) {
+    toIdx = state.chords.length - 1;
+  } else {
+    const targetIdx = state.chords.findIndex(c => c.id === targetId);
+    if (targetIdx === -1) return;
+    toIdx = targetIdx > fromIdx ? targetIdx - 1 : targetIdx;
+  }
+  if (toIdx === fromIdx) return; // no-op move — don't pollute undo history
+
+  pushHistory();
   const [moved] = state.chords.splice(fromIdx, 1);
   state.chords.splice(toIdx, 0, moved);
   saveState();
   render();
+}
+
+// Arrow-key selection: move the editor focus to the previous/next chord.
+function selectAdjacentChord(dir) {
+  if (state.isPlaying || state.chords.length === 0) return;
+  const idx = state.chords.findIndex(c => c.id === state.selectedChordId);
+  const nextIdx = idx === -1
+    ? (dir > 0 ? 0 : state.chords.length - 1)
+    : Math.min(Math.max(idx + dir, 0), state.chords.length - 1);
+  const chord = state.chords[nextIdx];
+  if (!chord || chord.id === state.selectedChordId) return;
+  resetHistoryCoalescing();
+  state.selectedChordId = chord.id;
+  saveState();
+  render();
+  scrollChordIntoView(chord.id);
 }
 
 function toggleNote(note) {
@@ -499,9 +625,11 @@ function toggleNote(note) {
   if (!chord) return;
   const idx = chord.notes.indexOf(note);
   if (idx >= 0) {
+    pushHistory();
     chord.notes.splice(idx, 1);
   } else {
     if (chord.notes.length >= MAX_NOTES) return;
+    pushHistory();
     chord.notes.push(note);
     chord.notes = sortNotes(chord.notes);
     previewNote(note);
@@ -691,8 +819,22 @@ function downloadBlob(blob, filename) {
 }
 
 // === Export: MIDI ===
-function exportMidi() {
+async function exportMidi() {
   if (state.chords.length === 0) return;
+
+  const btn = document.getElementById('export-midi-btn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Preparing…';
+  try {
+    await loadScript(MIDI_LIB_SRC);
+  } catch (e) {
+    alert('MIDI library failed to load. Check your connection and try again.');
+    return;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
   if (typeof Midi === 'undefined') {
     alert('MIDI library failed to load.');
     return;
@@ -746,17 +888,46 @@ function vexKey(note) {
 }
 
 function durationToVex(beats) {
-  // beats → VexFlow duration codes. 1 beat = quarter note.
-  if (beats >= 4) return 'w';
-  if (beats >= 2) return 'h';
-  if (beats >= 1) return 'q';
-  if (beats >= 0.5) return '8';
-  return '16';
+  // beats → VexFlow duration code + dot count. 1 beat = quarter note.
+  // Dotted values (base × 1.5) render with a dot: 6 → w., 3 → h., 1.5 → q.,
+  // 0.75 → 8., 0.375 → 16. Anything between thresholds rounds down to the
+  // nearest plain value, as before.
+  const table = [[4, 'w'], [2, 'h'], [1, 'q'], [0.5, '8'], [0.25, '16']];
+  for (const [base, code] of table) {
+    if (beats >= base * 1.5) return { code, dots: 1 };
+    if (beats >= base) return { code, dots: 0 };
+  }
+  return { code: '16', dots: 0 };
+}
+
+// StaveNote constructor with dot handling. VexFlow needs the 'd' in the
+// duration string for tick math AND addDotToAll() for the glyph. Falls back
+// to the undotted duration if this VexFlow build rejects the dotted string.
+function makeSheetNote(keys, code, dots, clef, isRest) {
+  const restSuffix = isRest ? 'r' : '';
+  let note;
+  try {
+    note = new Vex.Flow.StaveNote({
+      keys,
+      duration: code + (dots ? 'd' : '') + restSuffix,
+      clef
+    });
+  } catch (e) {
+    note = new Vex.Flow.StaveNote({ keys, duration: code + restSuffix, clef });
+    return note;
+  }
+  if (dots) {
+    try { note.addDotToAll(); } catch (e) { /* dot glyph optional */ }
+  }
+  return note;
 }
 
 function buildStaveNoteForClef(chord, clef) {
-  const dur = durationToVex(chord.duration);
+  const { code, dots } = durationToVex(chord.duration);
+  // Drop malformed note strings (corrupted storage) instead of silently
+  // rendering them as middle C via the vexKey fallback.
   const clefNotes = chord.notes.filter(n => {
+    if (!/^[A-G][#b]?\d+$/.test(n)) return false;
     const m = noteToMidi(n);
     return clef === 'treble' ? m >= MIDDLE_C_MIDI : m < MIDDLE_C_MIDI;
   });
@@ -764,11 +935,7 @@ function buildStaveNoteForClef(chord, clef) {
   // Empty clef gets a rest of the right duration (at a neutral staff position)
   if (clefNotes.length === 0) {
     const restKey = clef === 'bass' ? 'd/3' : 'b/4';
-    const rest = new Vex.Flow.StaveNote({
-      keys: [restKey],
-      duration: dur + 'r',
-      clef
-    });
+    const rest = makeSheetNote([restKey], code, dots, clef, true);
     // Still annotate the treble row with the chord name even when that clef is a rest
     if (clef === 'treble') {
       annotateWithName(rest, chord);
@@ -776,11 +943,7 @@ function buildStaveNoteForClef(chord, clef) {
     return rest;
   }
 
-  const note = new Vex.Flow.StaveNote({
-    keys: clefNotes.map(vexKey),
-    duration: dur,
-    clef
-  });
+  const note = makeSheetNote(clefNotes.map(vexKey), code, dots, clef, false);
 
   clefNotes.forEach((n, i) => {
     const acc = n.match(/^[A-G]([#b])/);
@@ -921,8 +1084,21 @@ function renderSheet() {
   }
 }
 
-function openSheetModal() {
+async function openSheetModal() {
   if (state.isPlaying) stopPlayback();
+
+  // Lazy-load VexFlow on first open. On failure renderSheet() shows its
+  // existing "Notation library failed to load." message inside the modal.
+  const btn = document.getElementById('view-sheet-btn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Loading…';
+  try {
+    await loadScript(VEXFLOW_SRC);
+  } catch (e) { /* renderSheet handles the missing global */ }
+  btn.disabled = false;
+  btn.textContent = original;
+
   renderSheet();
   document.getElementById('sheet-modal').hidden = false;
   document.body.style.overflow = 'hidden';
@@ -1021,6 +1197,14 @@ function renderChordList() {
     const name = getDisplayName(chord);
     const isEmpty = !name;
 
+    // Keyboard access: cards are tabbable, Enter selects. The hover-revealed
+    // duplicate/delete buttons also appear on :focus-within (see CSS).
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-pressed', chord.id === state.selectedChordId ? 'true' : 'false');
+    card.setAttribute('aria-label',
+      `${name || 'empty chord'}, ${formatBeats(chord.duration)}`);
+
     const articRaw = ARTICULATION_SYMBOLS[chord.articulation || 'block'] || '';
     const articSymbol = articRaw ? `${articRaw} ` : '';
     card.innerHTML = `
@@ -1034,9 +1218,23 @@ function renderChordList() {
       if (state.isPlaying) return;
       if (e.target.closest('.delete-btn')) return;
       if (e.target.closest('.copy-btn')) return;
+      resetHistoryCoalescing();
       state.selectedChordId = chord.id;
       saveState();
       render();
+    });
+
+    card.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter') return;
+      e.preventDefault();
+      if (state.isPlaying) return;
+      resetHistoryCoalescing();
+      state.selectedChordId = chord.id;
+      saveState();
+      render();
+      // render() rebuilt the list — restore focus to this chord's new card
+      const fresh = document.querySelector(`.chord-card[data-id="${chord.id}"]`);
+      if (fresh) fresh.focus();
     });
 
     card.querySelector('.delete-btn').addEventListener('click', (e) => {
@@ -1071,13 +1269,51 @@ function renderChordList() {
       e.preventDefault();
       card.classList.remove('drag-over');
       const fromId = e.dataTransfer.getData('text/plain');
-      if (fromId && fromId !== chord.id) moveChord(fromId, chord.id);
+      if (fromId && fromId !== chord.id) moveChordBefore(fromId, chord.id);
     });
 
     // Insert before the persistent "+ Add chord" card so it stays at the end.
     if (addBtn) container.insertBefore(card, addBtn);
     else container.appendChild(card);
   });
+}
+
+// Targeted update for one chord's card — used by the high-frequency input
+// handlers (custom name, duration, stagger) so each keystroke patches two
+// text nodes instead of rebuilding the whole list and re-attaching ~6
+// listeners per card.
+function updateChordCard(chord) {
+  const card = document.querySelector(`.chord-card[data-id="${chord.id}"]`);
+  if (!card) return;
+  const name = getDisplayName(chord);
+  const nameEl = card.querySelector('.name');
+  nameEl.textContent = name || '(empty)';
+  nameEl.classList.toggle('empty', !name);
+  const articRaw = ARTICULATION_SYMBOLS[chord.articulation || 'block'] || '';
+  card.querySelector('.duration').textContent =
+    `${articRaw ? `${articRaw} ` : ''}${formatBeats(chord.duration)}`;
+  card.setAttribute('aria-label',
+    `${name || 'empty chord'}, ${formatBeats(chord.duration)}`);
+}
+
+// The "Editing: <name>" pill. Shared by renderEditor and the custom-name
+// input handler (which previously left the pill stale while typing).
+function updateEditorChordName(chord) {
+  const el = document.getElementById('editor-chord-name');
+  if (!el) return;
+  if (!chord) {
+    el.textContent = 'no chord selected';
+    el.classList.add('empty');
+    return;
+  }
+  const name = getDisplayName(chord);
+  if (name) {
+    el.textContent = name;
+    el.classList.remove('empty');
+  } else {
+    el.textContent = 'empty chord';
+    el.classList.add('empty');
+  }
 }
 
 function renderPiano() {
@@ -1142,13 +1378,10 @@ function renderEditor() {
   const spreadWrap = document.getElementById('spread-wrap');
   const playChordBtn = document.getElementById('play-chord-btn');
   const clearNotesBtn = document.getElementById('clear-notes-btn');
-  const editorChordName = document.getElementById('editor-chord-name');
+
+  updateEditorChordName(chord);
 
   if (!chord) {
-    if (editorChordName) {
-      editorChordName.textContent = 'no chord selected';
-      editorChordName.classList.add('empty');
-    }
     notesDisplay.textContent = '—';
     detectedDisplay.textContent = '—';
     customName.value = '';
@@ -1160,19 +1393,6 @@ function renderEditor() {
     clearNotesBtn.disabled = true;
     updatePianoSelection();
     return;
-  }
-
-  // Populate the "Editing: <name>" heading so the editor visibly reflects the
-  // currently selected chord card.
-  if (editorChordName) {
-    const editingName = getDisplayName(chord);
-    if (editingName) {
-      editorChordName.textContent = editingName;
-      editorChordName.classList.remove('empty');
-    } else {
-      editorChordName.textContent = 'empty chord';
-      editorChordName.classList.add('empty');
-    }
   }
 
   const lockedForPlayback = state.isPlaying;
@@ -1229,11 +1449,16 @@ function renderEditor() {
   updatePianoSelection();
 }
 
-function updatePlayButtons() {
+function updateControls() {
   const loading = state.isLoadingInstrument;
   document.getElementById('play-all-btn').disabled = loading || state.isPlaying || state.chords.length === 0;
   document.getElementById('stop-btn').disabled = !state.isPlaying;
   document.getElementById('add-chord-btn').disabled = state.isPlaying;
+
+  const undoBtn = document.getElementById('undo-btn');
+  const redoBtn = document.getElementById('redo-btn');
+  if (undoBtn) undoBtn.disabled = state.isPlaying || undoHistory.past.length === 0;
+  if (redoBtn) redoBtn.disabled = state.isPlaying || undoHistory.future.length === 0;
 
   // Transpose buttons disable at the piano edges and during playback.
   const transposeDownBtn = document.getElementById('transpose-down-btn');
@@ -1252,7 +1477,7 @@ function render() {
   document.body.classList.toggle('is-playing', state.isPlaying);
   renderChordList();
   renderEditor();
-  updatePlayButtons();
+  updateControls();
 }
 
 // === Init ===
@@ -1310,10 +1535,31 @@ function init() {
     state.transposeAll = e.target.checked;
     saveState();
     // The set of in-range targets just changed — refresh button enabled state.
-    updatePlayButtons();
+    updateControls();
   });
 
-  document.getElementById('add-chord-btn').addEventListener('click', addChord);
+  // The add-chord card doubles as the end-of-list drop zone: dropping a
+  // dragged chord on it moves that chord to the end of the progression.
+  const addCardBtn = document.getElementById('add-chord-btn');
+  addCardBtn.addEventListener('click', addChord);
+  addCardBtn.addEventListener('dragover', (e) => {
+    if (state.isPlaying) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    addCardBtn.classList.add('drag-over');
+  });
+  addCardBtn.addEventListener('dragleave', () => {
+    addCardBtn.classList.remove('drag-over');
+  });
+  addCardBtn.addEventListener('drop', (e) => {
+    e.preventDefault();
+    addCardBtn.classList.remove('drag-over');
+    const fromId = e.dataTransfer.getData('text/plain');
+    if (fromId) moveChordBefore(fromId, null);
+  });
+
+  document.getElementById('undo-btn').addEventListener('click', undo);
+  document.getElementById('redo-btn').addEventListener('click', redo);
   document.getElementById('play-all-btn').addEventListener('click', playProgression);
   document.getElementById('stop-btn').addEventListener('click', stopPlayback);
   document.getElementById('play-chord-btn').addEventListener('click', () => {
@@ -1322,19 +1568,25 @@ function init() {
   document.getElementById('clear-notes-btn').addEventListener('click', () => {
     if (state.isPlaying) return;
     const chord = getSelectedChord();
-    if (chord) {
+    if (chord && chord.notes.length > 0) {
+      pushHistory();
       chord.notes = [];
       saveState();
       render();
     }
   });
+  // High-frequency text/number inputs use targeted card updates instead of a
+  // full list rebuild, and tag-coalesced history so one typing burst = one
+  // undo step.
   document.getElementById('custom-name').addEventListener('input', (e) => {
     if (state.isPlaying) return;
     const chord = getSelectedChord();
     if (chord) {
+      pushHistory(`name:${chord.id}`);
       chord.customName = e.target.value.trim() || null;
       saveState();
-      renderChordList();
+      updateChordCard(chord);
+      updateEditorChordName(chord);
     }
   });
   document.getElementById('duration').addEventListener('input', (e) => {
@@ -1343,9 +1595,10 @@ function init() {
     if (chord) {
       const val = parseFloat(e.target.value);
       if (!isNaN(val) && val >= 0.0625 && val <= 16) {
+        pushHistory(`dur:${chord.id}`);
         chord.duration = val;
         saveState();
-        renderChordList();
+        updateChordCard(chord);
       }
     }
   });
@@ -1356,6 +1609,7 @@ function init() {
     if (!val) return;
     const chord = getSelectedChord();
     if (chord) {
+      pushHistory();
       chord.duration = parseFloat(val);
       saveState();
       render();
@@ -1368,6 +1622,7 @@ function init() {
     const chord = getSelectedChord();
     if (!chord) return;
     if (VALID_ARTICULATIONS.includes(e.target.value)) {
+      pushHistory();
       chord.articulation = e.target.value;
       saveState();
       render();
@@ -1380,9 +1635,9 @@ function init() {
     if (!chord) return;
     const val = parseFloat(e.target.value);
     if (!isNaN(val) && val >= 10 && val <= 500) {
+      pushHistory(`stag:${chord.id}`);
       chord.stagger = val;
-      saveState();
-      renderChordList();
+      saveState(); // stagger isn't shown on cards — no DOM update needed
     }
   });
 
@@ -1398,16 +1653,48 @@ function init() {
     document.body.classList.remove('printing-sheet');
   });
 
+  // Global shortcuts. Skipped while focus is in a form control so native
+  // editing behavior (including the browser's own text undo) applies there.
   document.addEventListener('keydown', (e) => {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT') return;
-    if (e.code === 'Escape' && !document.getElementById('sheet-modal').hidden) {
-      closeSheetModal();
+    const tag = e.target.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+    const mod = e.ctrlKey || e.metaKey;
+
+    if (mod && e.code === 'KeyZ') {
+      e.preventDefault();
+      if (e.shiftKey) redo();
+      else undo();
+      return;
+    }
+    if (mod && e.code === 'KeyY') {
+      e.preventDefault();
+      redo();
+      return;
+    }
+    if (mod && e.code === 'KeyD') {
+      e.preventDefault(); // also suppresses the browser's bookmark dialog
+      if (state.selectedChordId) duplicateChord(state.selectedChordId);
+      return;
+    }
+    if (e.code === 'Escape') {
+      if (!document.getElementById('sheet-modal').hidden) closeSheetModal();
+      else if (state.isPlaying) stopPlayback();
       return;
     }
     if (e.code === 'Space') {
       e.preventDefault();
       if (state.isPlaying) stopPlayback();
       else playProgression();
+      return;
+    }
+    if (e.code === 'Delete' || e.code === 'Backspace') {
+      e.preventDefault();
+      if (state.selectedChordId) removeChord(state.selectedChordId);
+      return;
+    }
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+      e.preventDefault();
+      selectAdjacentChord(e.code === 'ArrowRight' ? 1 : -1);
     }
   });
 
